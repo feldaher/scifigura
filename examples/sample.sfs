@@ -1,0 +1,152 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "created": "2026-02-12T11:12:00Z",
+    "modified": "2026-02-12T11:12:00Z",
+    "author": "Scientific Figure Studio",
+    "title": "Sample Multi-Panel Figure",
+    "description": "Example .sfs file demonstrating all object types"
+  },
+  "canvas": {
+    "width": 180,
+    "height": 120,
+    "unit": "mm",
+    "dpi": 300,
+    "backgroundColor": "#FFFFFF"
+  },
+  "objects": [
+    {
+      "id": "img1",
+      "type": "image",
+      "position": { "x": 10, "y": 10 },
+      "size": { "width": 70, "height": 50 },
+      "source": "data:image/png;base64,iVBORw0KG...",
+      "format": "png",
+      "originalDPI": 300,
+      "zIndex": 1,
+      "visible": true,
+      "locked": false,
+      "name": "Microscopy Image A"
+    },
+    {
+      "id": "scale1",
+      "type": "scale_bar",
+      "position": { "x": 65, "y": 55 },
+      "linkedImageId": "img1",
+      "physicalLength": 10,
+      "physicalUnit": "μm",
+      "pixelLength": 100,
+      "displayLength": 10,
+      "zIndex": 10,
+      "style": {
+        "color": "#FFFFFF",
+        "thickness": 2,
+        "labelPosition": "below",
+        "fontSize": 8
+      },
+      "name": "10 μm Scale Bar"
+    },
+    {
+      "id": "text1",
+      "type": "text",
+      "position": { "x": 10, "y": 5 },
+      "content": "A",
+      "zIndex": 15,
+      "style": {
+        "fontFamily": "Arial",
+        "fontSize": 14,
+        "fontWeight": "bold",
+        "fontStyle": "normal",
+        "color": "#000000",
+        "textAlign": "left"
+      },
+      "name": "Panel Label A"
+    },
+    {
+      "id": "img2",
+      "type": "image",
+      "position": { "x": 100, "y": 10 },
+      "size": { "width": 70, "height": 50 },
+      "source": "data:image/png;base64,iVBORw0KG...",
+      "format": "png",
+      "originalDPI": 300,
+      "zIndex": 2,
+      "name": "Microscopy Image B"
+    },
+    {
+      "id": "text2",
+      "type": "text",
+      "position": { "x": 100, "y": 5 },
+      "content": "B",
+      "zIndex": 16,
+      "style": {
+        "fontFamily": "Arial",
+        "fontSize": 14,
+        "fontWeight": "bold",
+        "color": "#000000"
+      },
+      "name": "Panel Label B"
+    },
+    {
+      "id": "rect1",
+      "type": "rectangle",
+      "position": { "x": 10, "y": 70 },
+      "size": { "width": 40, "height": 30 },
+      "fill": "#E3F2FD",
+      "stroke": {
+        "color": "#1976D2",
+        "width": 1
+      },
+      "cornerRadius": 2,
+      "zIndex": 3,
+      "name": "Info Box"
+    },
+    {
+      "id": "text3",
+      "type": "text",
+      "position": { "x": 15, "y": 75 },
+      "content": "Control\nn = 24",
+      "zIndex": 17,
+      "style": {
+        "fontFamily": "Arial",
+        "fontSize": 10,
+        "color": "#000000"
+      },
+      "name": "Control Label"
+    },
+    {
+      "id": "line1",
+      "type": "line",
+      "position": { "x": 85, "y": 30 },
+      "end": { "x": 95, "y": 30 },
+      "stroke": {
+        "color": "#FF0000",
+        "width": 2
+      },
+      "arrowhead": "both",
+      "zIndex": 5,
+      "name": "Comparison Arrow"
+    },
+    {
+      "id": "ellipse1",
+      "type": "ellipse",
+      "position": { "x": 130, "y": 75 },
+      "size": { "width": 25, "height": 25 },
+      "fill": "#FFF59D",
+      "stroke": {
+        "color": "#F57C00",
+        "width": 2
+      },
+      "zIndex": 4,
+      "name": "Highlight Circle"
+    },
+    {
+      "id": "group1",
+      "type": "group",
+      "position": { "x": 0, "y": 0 },
+      "children": ["img1", "scale1", "text1"],
+      "zIndex": 0,
+      "name": "Panel A Group"
+    }
+  ]
+}

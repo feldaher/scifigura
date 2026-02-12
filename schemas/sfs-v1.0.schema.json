@@ -1,0 +1,345 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://scifigura.org/schemas/sfs-v1.0.schema.json",
+  "title": "Scientific Figure Studio Project",
+  "description": "Schema for .sfs project files v1.0",
+  "type": "object",
+  "required": ["version", "canvas", "objects"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "File format version"
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "created": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of file creation"
+        },
+        "modified": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of last modification"
+        },
+        "author": {
+          "type": "string",
+          "description": "Author name"
+        },
+        "title": {
+          "type": "string",
+          "description": "Figure title"
+        },
+        "description": {
+          "type": "string",
+          "description": "Figure description or notes"
+        }
+      }
+    },
+    "canvas": {
+      "type": "object",
+      "required": ["width", "height", "unit"],
+      "properties": {
+        "width": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Canvas width in specified units"
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Canvas height in specified units"
+        },
+        "unit": {
+          "type": "string",
+          "enum": ["mm", "cm", "in", "px"],
+          "description": "Measurement unit for canvas dimensions"
+        },
+        "dpi": {
+          "type": "integer",
+          "minimum": 72,
+          "maximum": 1200,
+          "default": 300,
+          "description": "Target DPI for export"
+        },
+        "backgroundColor": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$",
+          "default": "#FFFFFF",
+          "description": "Background color as hex code"
+        }
+      }
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "$ref": "#/definitions/image" },
+          { "$ref": "#/definitions/text" },
+          { "$ref": "#/definitions/rectangle" },
+          { "$ref": "#/definitions/ellipse" },
+          { "$ref": "#/definitions/line" },
+          { "$ref": "#/definitions/scale_bar" },
+          { "$ref": "#/definitions/group" }
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "position": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "size": {
+      "type": "object",
+      "required": ["width", "height"],
+      "properties": {
+        "width": { "type": "number", "minimum": 0 },
+        "height": { "type": "number", "minimum": 0 }
+      }
+    },
+    "color": {
+      "type": "string",
+      "pattern": "^#[0-9A-Fa-f]{6}$"
+    },
+    "baseObject": {
+      "type": "object",
+      "required": ["id", "type", "position"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique object identifier"
+        },
+        "type": {
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/definitions/position",
+          "description": "Position in mm from top-left"
+        },
+        "rotation": {
+          "type": "number",
+          "default": 0,
+          "description": "Rotation in degrees"
+        },
+        "zIndex": {
+          "type": "integer",
+          "description": "Layer order (higher = front)"
+        },
+        "visible": {
+          "type": "boolean",
+          "default": true
+        },
+        "locked": {
+          "type": "boolean",
+          "default": false
+        },
+        "name": {
+          "type": "string",
+          "description": "User-defined object name"
+        }
+      }
+    },
+    "image": {
+      "allOf": [
+        { "$ref": "#/definitions/baseObject" },
+        {
+          "properties": {
+            "type": { "const": "image" },
+            "source": {
+              "type": "string",
+              "description": "Embedded base64 or file path"
+            },
+            "size": { "$ref": "#/definitions/size" },
+            "format": {
+              "type": "string",
+              "enum": ["png", "jpeg", "tiff", "svg", "pdf"]
+            },
+            "originalDPI": {
+              "type": "integer",
+              "description": "Original image DPI"
+            },
+            "metadata": {
+              "type": "object",
+              "description": "Image metadata (EXIF, microscopy, etc.)"
+            }
+          },
+          "required": ["source", "size", "format"]
+        }
+      ]
+    },
+    "text": {
+      "allOf": [
+        { "$ref": "#/definitions/baseObject" },
+        {
+          "properties": {
+            "type": { "const": "text" },
+            "content": { "type": "string" },
+            "style": {
+              "type": "object",
+              "properties": {
+                "fontFamily": { "type": "string", "default": "Arial" },
+                "fontSize": { "type": "number", "minimum": 1 },
+                "fontWeight": {
+                  "type": "string",
+                  "enum": ["normal", "bold"],
+                  "default": "normal"
+                },
+                "fontStyle": {
+                  "type": "string",
+                  "enum": ["normal", "italic"],
+                  "default": "normal"
+                },
+                "color": { "$ref": "#/definitions/color" },
+                "textAlign": {
+                  "type": "string",
+                  "enum": ["left", "center", "right"],
+                  "default": "left"
+                }
+              }
+            }
+          },
+          "required": ["content"]
+        }
+      ]
+    },
+    "rectangle": {
+      "allOf": [
+        { "$ref": "#/definitions/baseObject" },
+        {
+          "properties": {
+            "type": { "const": "rectangle" },
+            "size": { "$ref": "#/definitions/size" },
+            "fill": { "$ref": "#/definitions/color" },
+            "stroke": {
+              "type": "object",
+              "properties": {
+                "color": { "$ref": "#/definitions/color" },
+                "width": { "type": "number", "minimum": 0 }
+              }
+            },
+            "cornerRadius": {
+              "type": "number",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          "required": ["size"]
+        }
+      ]
+    },
+    "ellipse": {
+      "allOf": [
+        { "$ref": "#/definitions/baseObject" },
+        {
+          "properties": {
+            "type": { "const": "ellipse" },
+            "size": { "$ref": "#/definitions/size" },
+            "fill": { "$ref": "#/definitions/color" },
+            "stroke": {
+              "type": "object",
+              "properties": {
+                "color": { "$ref": "#/definitions/color" },
+                "width": { "type": "number", "minimum": 0 }
+              }
+            }
+          },
+          "required": ["size"]
+        }
+      ]
+    },
+    "line": {
+      "allOf": [
+        { "$ref": "#/definitions/baseObject" },
+        {
+          "properties": {
+            "type": { "const": "line" },
+            "end": { "$ref": "#/definitions/position" },
+            "stroke": {
+              "type": "object",
+              "properties": {
+                "color": { "$ref": "#/definitions/color" },
+                "width": { "type": "number", "minimum": 0 }
+              }
+            },
+            "arrowhead": {
+              "type": "string",
+              "enum": ["none", "start", "end", "both"],
+              "default": "none"
+            }
+          },
+          "required": ["end"]
+        }
+      ]
+    },
+    "scale_bar": {
+      "allOf": [
+        { "$ref": "#/definitions/baseObject" },
+        {
+          "properties": {
+            "type": { "const": "scale_bar" },
+            "linkedImageId": {
+              "type": "string",
+              "description": "ID of the parent image object"
+            },
+            "physicalLength": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Real-world length (e.g., 10 μm)"
+            },
+            "physicalUnit": {
+              "type": "string",
+              "description": "Unit of measurement (μm, nm, mm, etc.)"
+            },
+            "pixelLength": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Length in pixels on the image"
+            },
+            "displayLength": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Visual length in mm on canvas"
+            },
+            "style": {
+              "type": "object",
+              "properties": {
+                "color": { "$ref": "#/definitions/color" },
+                "thickness": { "type": "number", "minimum": 0 },
+                "labelPosition": {
+                  "type": "string",
+                  "enum": ["above", "below", "left", "right"],
+                  "default": "below"
+                },
+                "fontSize": { "type": "number", "minimum": 1 }
+              }
+            }
+          },
+          "required": ["physicalLength", "physicalUnit", "pixelLength", "displayLength"]
+        }
+      ]
+    },
+    "group": {
+      "allOf": [
+        { "$ref": "#/definitions/baseObject" },
+        {
+          "properties": {
+            "type": { "const": "group" },
+            "children": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Array of child object IDs"
+            }
+          },
+          "required": ["children"]
+        }
+      ]
+    }
+  }
+}
