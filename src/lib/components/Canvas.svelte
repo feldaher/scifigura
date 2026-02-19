@@ -1,37 +1,23 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
+  import PropertiesPanel from "./PropertiesPanel.svelte";
+  import Toolbox from "./Toolbox.svelte";
+  import type { CanvasObject, InteractionMode } from "../types";
+  import { open, save } from "@tauri-apps/plugin-dialog";
+  import { readFile, writeFile } from "@tauri-apps/plugin-fs";
+  import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
+  import { drawObject } from "../utils/render";
+  import { exportCanvas, type ExportOptions } from "../utils/export";
 
   // Props
   let { width = 800, height = 600 } = $props();
 
-  // Types
-  interface CanvasObject {
-    id: string;
-    type: "rectangle" | "ellipse" | "line" | "text" | "group";
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    // For groups
-    children?: CanvasObject[];
-
-    // For lines
-    x2?: number;
-    y2?: number;
-    arrowStart?: boolean;
-    arrowEnd?: boolean;
-
-    // For text
-    text?: string;
-    fontSize?: number;
-    fontFamily?: string;
-
-    fill: string;
-    stroke?: string;
-    strokeWidth?: number;
-
-    // Transformations
-    rotation?: number; // In radians
+  interface SnapGuide {
+    type: "vertical" | "horizontal";
+    offset: number; // x or y value
+    start: number;
+    end: number;
   }
 
   // State
@@ -47,6 +33,9 @@
   // Selection State
   let objects = $state<CanvasObject[]>([]); // Empty start
   let selectedIds = $state<Set<string>>(new Set());
+  let selectedObjects = $derived(
+    objects.filter((obj) => selectedIds.has(obj.id)),
+  );
   let selectionRect = $state<{
     x: number;
     y: number;
@@ -58,6 +47,10 @@
   let activeHandle: string | null = null;
   let hoveredHandle = $state<string | null>(null);
   let initialState: CanvasObject | null = null; // Snapshot for resize/rotate
+  let selectionSnapshot = $state(
+    new Map<string, { x: number; y: number; x2?: number; y2?: number }>(),
+  );
+  let activeGuides = $state<SnapGuide[]>([]); // Visual guides for snapping
 
   // History State
   let history = $state<CanvasObject[][]>([[]]); // Start with empty state
@@ -97,18 +90,6 @@
     }
   }
 
-  // Interaction Mode
-  type InteractionMode =
-    | "pan"
-    | "select"
-    | "move"
-    | "resize"
-    | "marquee"
-    | "draw_rectangle"
-    | "draw_ellipse"
-    | "draw_line"
-    | "draw_text"
-    | "rotate";
   let mode = $state<InteractionMode>("select"); // Default to select mode
 
   // Drawing State
@@ -123,18 +104,204 @@
     worldX: 0,
     worldY: 0,
   });
-  let textInputRef: HTMLInputElement;
+  let textInputRef = $state<HTMLInputElement>();
 
   // Settings
   let showGrid = $state(true);
   let snapToGrid = $state(false);
-  let gridSize = 10; // 10mm grid
   const RULER_SIZE = 20;
+
+  // Global Font Defaults
+  let defaultFontFamily = $state("Arial");
+  let defaultFontSize = $state(12);
+  let defaultFontWeight = $state<"normal" | "bold">("normal");
+  let defaultFontStyle = $state<"normal" | "italic">("normal");
+
+  // Global Style Defaults
+  let defaultFillColor = $state("#ffffff");
+  let defaultStrokeColor = $state("#000000");
+  let defaultStrokeWidth = $state(2);
+  let defaultLineDash = $state<number[]>([]);
+
+  // Image Import State
+  let imageCache = new Map<string, HTMLImageElement>();
+  let isDragOver = $state(false);
+  let imageInput: HTMLInputElement; // Reference to hidden file input
+
+  // Export State
+  let showExportDialog = $state(false);
+  let exportConfig = $state<ExportOptions>({
+    format: "png",
+    dpi: 300,
+  });
+  let isExporting = $state(false);
+
+  // Per-Tool Defaults
+  interface ToolStyle {
+    fill: string;
+    stroke: string;
+    strokeWidth: number;
+    lineDash: number[];
+    // Font props
+    fontFamily: string;
+    fontSize: number;
+    fontWeight: "normal" | "bold";
+    fontStyle: "normal" | "italic";
+  }
+
+  const defaultToolStyle: ToolStyle = {
+    fill: "#ffffff",
+    stroke: "#000000",
+    strokeWidth: 2,
+    lineDash: [],
+    fontFamily: "Arial",
+    fontSize: 12,
+    fontWeight: "normal",
+    fontStyle: "normal",
+  };
+
+  let toolStyles = $state<Record<string, ToolStyle>>({
+    draw_rectangle: { ...defaultToolStyle, fill: "#dddddd", stroke: "#333333" },
+    draw_ellipse: { ...defaultToolStyle, fill: "#cccccc", stroke: "#333333" }, // User asked for grey
+    draw_line: { ...defaultToolStyle, stroke: "#333333" },
+    draw_text: { ...defaultToolStyle, fill: "#333333", fontSize: 16 },
+    draw_label: {
+      ...defaultToolStyle,
+      fill: "#000000",
+      fontSize: 24,
+      fontWeight: "bold",
+    }, // User asked for black
+    draw_scalebar: {
+      ...defaultToolStyle,
+      stroke: "#000000",
+      strokeWidth: 4,
+      showText: true,
+    } as any,
+  });
+
+  // Track active tool style key to avoid updating defaults from selection when drawing
+  let activeToolKey = $derived(mode.startsWith("draw_") ? mode : null);
+
+  function loadToolStyles(toolMode: string) {
+    const style = toolStyles[toolMode];
+    if (style) {
+      defaultFillColor = style.fill;
+      defaultStrokeColor = style.stroke;
+      defaultStrokeWidth = style.strokeWidth;
+      defaultLineDash = style.lineDash;
+      defaultFontFamily = style.fontFamily;
+      defaultFontSize = style.fontSize;
+      defaultFontWeight = style.fontWeight;
+      defaultFontStyle = style.fontStyle;
+    }
+  }
+
+  function updateToolStyle(prop: keyof ToolStyle, value: any) {
+    if (activeToolKey) {
+      toolStyles[activeToolKey] = {
+        ...toolStyles[activeToolKey],
+        [prop]: value,
+      };
+    }
+  }
+
+  let isSwitchingTool = false;
 
   // Constants
   const MIN_ZOOM = 0.1;
+  const gridSize = 20;
+  const HIT_TOLERANCE = 5; // Distance in World Units
+  const SNAP_TOLERANCE = 10; // Distance in World Units
   const MAX_ZOOM = 32.0;
   const ZOOM_SENSITIVITY = 0.001;
+
+  // Scientific Features State
+  let nextLabelIndex = $state(0);
+
+  function getLabelText(index: number): string {
+    // Simple A-Z, then AA, AB...
+    // For now, let's just do A-Z
+    if (index < 26) return String.fromCharCode(65 + index);
+    return (
+      String.fromCharCode(65 + Math.floor(index / 26) - 1) +
+      String.fromCharCode(65 + (index % 26))
+    );
+  }
+
+  function resetLabelSequence() {
+    nextLabelIndex = 0;
+    // Optional: Visual feedback or toast?
+    console.log("Label sequence reset to A");
+  }
+
+  async function setMode(m: InteractionMode) {
+    console.log("setMode called:", m, "isSwitchingTool:", isSwitchingTool);
+    if (m.startsWith("draw_")) {
+      isSwitchingTool = true;
+      console.log("Clearing selection...");
+      // Deselect BEFORE switching tool to ensure no styles bleed
+      selectedIds.clear();
+      selectedIds = new Set(selectedIds);
+      await tick(); // Ensure UI updates to 'no selection' state
+
+      console.log("Loading tool styles explicitly while guarded...");
+      loadToolStyles(m); // Load styles safely while selection is empty and guard is active
+
+      console.log("Setting mode:", m);
+      mode = m;
+
+      // Wait for effects to flush before lifting guard
+      await tick();
+      isSwitchingTool = false;
+      console.log("Tool switch complete. Guard lifted.");
+    } else {
+      mode = m;
+    }
+  }
+
+  $effect(() => {
+    // INVARIANT ENFORCEMENT:
+    // If we are in a drawing mode, there should be NO selection.
+    // This protects against style bleeding if tool switching logic is bypassed.
+    if (mode.startsWith("draw_") && selectedIds.size > 0) {
+      console.warn(
+        "Invariant Check: Found selection in Drawing Mode. Clearing.",
+      );
+      selectedIds.clear();
+      selectedIds = new Set(selectedIds);
+    }
+  });
+
+  $effect(() => {
+    // SYNC UI WITH SELECTION
+    // Only verify/sync properties if we are in Select Mode and have a selection.
+    // This prevents "fighting" with tool defaults when switching tools.
+    if (mode === "select" && selectedIds.size === 1) {
+      console.log("Syncing UI to Selection:", Array.from(selectedIds)[0]);
+      const id = Array.from(selectedIds)[0];
+      const obj = objects.find((o) => o.id === id);
+      if (obj) {
+        if (obj.fill) defaultFillColor = obj.fill;
+        if (obj.stroke) defaultStrokeColor = obj.stroke;
+        if (obj.strokeWidth) defaultStrokeWidth = obj.strokeWidth;
+        if (obj.lineDash) {
+          defaultLineDash = obj.lineDash;
+        }
+
+        // Fonts (if text object)
+        if (obj.type === "text" || obj.type === "label") {
+          if (obj.fontFamily) defaultFontFamily = obj.fontFamily;
+          if (obj.fontSize) defaultFontSize = obj.fontSize;
+          if (obj.fontWeight) defaultFontWeight = obj.fontWeight;
+          if (obj.fontStyle) defaultFontStyle = obj.fontStyle;
+        }
+      }
+    }
+    // REMOVED: else if (mode.startsWith("draw_")) loadToolStyles(mode)
+    // Rationale: setMode() now handles loading styles EXPLICITLY.
+    // Having it here in a reactive effect causes race conditions where
+    // the effect runs "too early" or "too late" relative to selection clearing.
+  });
 
   onMount(() => {
     ctx = canvas.getContext("2d");
@@ -155,7 +322,47 @@
     };
     loop();
 
-    return () => cancelAnimationFrame(frameId);
+    // Set up Tauri Drag & Drop Listeners
+    // Use an IIFE or similar to handle async listeners in effect
+    let unlisteners: (() => void)[] = [];
+
+    if (isTauri()) {
+      (async () => {
+        try {
+          console.log("Setting up Tauri drag-drop listeners...");
+          const u1 = await listen("tauri://drag-enter", () => {
+            isDragOver = true;
+          });
+          unlisteners.push(u1);
+
+          const u2 = await listen("tauri://drag-leave", () => {
+            isDragOver = false;
+          });
+          unlisteners.push(u2);
+
+          const u3 = await listen("tauri://drag-drop", (event) => {
+            isDragOver = false;
+            const payload = event.payload as {
+              paths: string[];
+              position: { x: number; y: number };
+            };
+            if (payload.paths && payload.paths.length > 0) {
+              for (const path of payload.paths) {
+                addImageToCanvas(path);
+              }
+            }
+          });
+          unlisteners.push(u3);
+        } catch (err) {
+          console.error("Failed to setup Tauri listeners:", err);
+        }
+      })();
+    }
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      unlisteners.forEach((u) => u());
+    };
   });
 
   function centerCanvas() {
@@ -173,7 +380,7 @@
     // Clear visible area
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = "#1e1e1e"; // Dark background
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
     // 1. Draw Paper & Grid (World Space)
     ctx.save();
@@ -194,16 +401,19 @@
 
     // Draw Objects
     for (const obj of objects) {
-      drawObject(ctx, obj);
+      drawObject(ctx, obj, imageCache);
     }
 
     // Draw Pending Object (being drawn)
     if (pendingObject) {
-      drawObject(ctx, pendingObject);
+      drawObject(ctx, pendingObject, imageCache);
     }
 
     // Draw Selection Overlay
     drawSelectionOverlay(ctx);
+
+    // Draw Snap Guides
+    drawGuides(ctx);
 
     ctx.restore();
 
@@ -211,264 +421,134 @@
     drawRulers(ctx);
   }
 
-  function drawObject(ctx: CanvasRenderingContext2D, obj: CanvasObject) {
-    ctx.save();
-
-    // Apply transformations
-    // 1. Translate to center
-    const cx = obj.x + obj.width / 2;
-    const cy = obj.y + obj.height / 2;
-
-    // For lines, center is mid-point
-    let lcx = cx,
-      lcy = cy;
-    if (obj.type === "line" && obj.x2 !== undefined && obj.y2 !== undefined) {
-      lcx = (obj.x + obj.x2) / 2;
-      lcy = (obj.y + obj.y2) / 2;
-    } else if (obj.type === "group") {
-      // Groups might have their own x/y/w/h which is the bounding box
-      // So cx/cy are correct for the group wrapper
-    }
-
-    // Use calculated center for rotation
-    const rotCenter =
-      obj.type === "line" ? { x: lcx, y: lcy } : { x: cx, y: cy };
-
-    if (obj.rotation) {
-      ctx.translate(rotCenter.x, rotCenter.y);
-      ctx.rotate(obj.rotation);
-      ctx.translate(-rotCenter.x, -rotCenter.y);
-    }
-
-    if (obj.type === "rectangle") {
-      ctx.beginPath();
-      ctx.rect(obj.x, obj.y, obj.width, obj.height);
-      ctx.fillStyle = obj.fill;
-      ctx.fill();
-    } else if (obj.type === "ellipse") {
-      ctx.beginPath();
-      ctx.ellipse(
-        obj.x + obj.width / 2,
-        obj.y + obj.height / 2,
-        obj.width / 2,
-        obj.height / 2,
-        0,
-        0,
-        2 * Math.PI,
-      );
-      ctx.fillStyle = obj.fill;
-      ctx.fill();
-    } else if (obj.type === "line") {
-      if (obj.x2 !== undefined && obj.y2 !== undefined) {
-        ctx.beginPath();
-        ctx.moveTo(obj.x, obj.y);
-        ctx.lineTo(obj.x2, obj.y2);
-      }
-    } else if (obj.type === "text" && obj.text) {
-      ctx.font = `${obj.fontSize || 16}px ${obj.fontFamily || "sans-serif"}`;
-      ctx.textBaseline = "top";
-      ctx.fillStyle = obj.fill;
-      ctx.fillText(obj.text, obj.x, obj.y);
-
-      // Measure text for selection box
-      const metrics = ctx.measureText(obj.text);
-      obj.width = metrics.width;
-      obj.height = obj.fontSize || 16; // Approx height
-    } else if (obj.type === "group" && obj.children) {
-      // Recursively draw children
-      for (const child of obj.children) {
-        drawObject(ctx, child);
-      }
-      // Optionally draw a bounding box hint if selected, but that's handled by drawSelectionOverlay
-      return;
-    }
-
-    if (obj.type !== "line" && obj.type !== "text" && obj.type !== "group") {
-      // Fill for shapes
-      ctx.fillStyle = obj.fill;
-      ctx.fill();
-    }
-
-    if (obj.stroke || obj.type === "line") {
-      ctx.strokeStyle = obj.stroke || "#000";
-      ctx.lineWidth = obj.strokeWidth || 1;
-      ctx.stroke();
-    }
-
-    // Draw Arrowheads
-    if (
-      obj.type === "line" &&
-      (obj.arrowStart || obj.arrowEnd) &&
-      obj.x2 !== undefined &&
-      obj.y2 !== undefined
-    ) {
-      const angle = Math.atan2(obj.y2 - obj.y, obj.x2 - obj.x);
-      const headLen = 10 * (obj.strokeWidth || 1) * 0.5 + 5; // Approx size
-
-      ctx.fillStyle = obj.stroke || "#000";
-
-      if (obj.arrowEnd) {
-        ctx.beginPath();
-        ctx.moveTo(obj.x2, obj.y2);
-        ctx.lineTo(
-          obj.x2 - headLen * Math.cos(angle - Math.PI / 6),
-          obj.y2 - headLen * Math.sin(angle - Math.PI / 6),
-        );
-        ctx.lineTo(
-          obj.x2 - headLen * Math.cos(angle + Math.PI / 6),
-          obj.y2 - headLen * Math.sin(angle + Math.PI / 6),
-        );
-        ctx.closePath();
-        ctx.fill();
-      }
-
-      if (obj.arrowStart) {
-        ctx.beginPath();
-        ctx.moveTo(obj.x, obj.y);
-        ctx.lineTo(
-          obj.x + headLen * Math.cos(angle - Math.PI / 6),
-          obj.y + headLen * Math.sin(angle - Math.PI / 6),
-        );
-        ctx.lineTo(
-          obj.x + headLen * Math.cos(angle + Math.PI / 6),
-          obj.y + headLen * Math.sin(angle + Math.PI / 6),
-        );
-        ctx.closePath();
-        ctx.fill();
-      }
-    }
-    ctx.restore();
-  }
-
   function drawSelectionOverlay(ctx: CanvasRenderingContext2D) {
-    if (selectedIds.size === 0) return;
+    // Draw selection handles for selected objects
+    if (selectedIds.size > 0) {
+      ctx.save();
+      ctx.strokeStyle = "#2196f3";
+      ctx.lineWidth = 1 / zoom;
 
-    ctx.save();
-    ctx.strokeStyle = "#2196f3";
-    ctx.lineWidth = 1 / zoom;
-
-    // Handle single selection with rotation separate from multi-selection (axis aligned)
-    if (selectedIds.size === 1) {
-      const id = Array.from(selectedIds)[0];
-      const obj = objects.find((o) => o.id === id);
-      if (obj) {
-        // Calculate center
-        let cx = obj.x + obj.width / 2;
-        let cy = obj.y + obj.height / 2;
-        if (
-          obj.type === "line" &&
-          obj.x2 !== undefined &&
-          obj.y2 !== undefined
-        ) {
-          cx = (obj.x + obj.x2) / 2;
-          cy = (obj.y + obj.y2) / 2;
-        }
-
-        ctx.translate(cx, cy);
-        ctx.rotate(obj.rotation || 0);
-        ctx.translate(-cx, -cy);
-
-        // Draw bounding box (local space)
-        let bx = obj.x,
-          by = obj.y,
-          bw = obj.width,
-          bh = obj.height;
-        if (
-          obj.type === "line" &&
-          obj.x2 !== undefined &&
-          obj.y2 !== undefined
-        ) {
-          // For line, bounding box is min/max
-          bx = Math.min(obj.x, obj.x2);
-          by = Math.min(obj.y, obj.y2);
-          bw = Math.abs(obj.x - obj.x2);
-          bh = Math.abs(obj.y - obj.y2);
-        }
-        ctx.strokeRect(bx, by, bw, bh);
-
-        // Draw Resize Handles (8)
-        const handleSize = 8 / zoom;
-        const hHalf = handleSize / 2;
-
-        ctx.fillStyle = "white";
-        ctx.strokeStyle = "black";
-
-        // Corners: NW, NE, SE, SW
-        const corners = [
-          { x: bx, y: by }, // NW
-          { x: bx + bw, y: by }, // NE
-          { x: bx + bw, y: by + bh }, // SE
-          { x: bx, y: by + bh }, // SW
-          // Sides: N, E, S, W
-          { x: bx + bw / 2, y: by }, // N
-          { x: bx + bw, y: by + bh / 2 }, // E
-          { x: bx + bw / 2, y: by + bh }, // S
-          { x: bx, y: by + bh / 2 }, // W
-        ];
-
-        corners.forEach((p) => {
-          ctx.beginPath();
-          ctx.rect(p.x - hHalf, p.y - hHalf, handleSize, handleSize);
-          ctx.fill();
-          ctx.stroke();
-        });
-
-        // Draw Rotate Handle (Top)
-        const rotDist = 20 / zoom;
-        const rx = bx + bw / 2;
-        const ry = by - rotDist;
-
-        ctx.beginPath();
-        ctx.moveTo(rx, by);
-        ctx.lineTo(rx, ry);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.arc(rx, ry, handleSize / 1.5, 0, Math.PI * 2);
-        ctx.fillStyle = "white";
-        ctx.fill();
-        ctx.stroke();
-      }
-    } else {
-      // Multi-selection: Axis-aligned bounding box of all
-      let minX = Infinity,
-        minY = Infinity,
-        maxX = -Infinity,
-        maxY = -Infinity;
-
-      for (const obj of objects) {
-        if (selectedIds.has(obj.id)) {
-          let ox = obj.x,
-            oy = obj.y,
-            ow = obj.width,
-            oh = obj.height;
+      // Handle single selection with rotation separate from multi-selection (axis aligned)
+      if (selectedIds.size === 1) {
+        const id = Array.from(selectedIds)[0];
+        const obj = objects.find((o) => o.id === id);
+        if (obj) {
+          // Calculate center
+          let cx = obj.x + obj.width / 2;
+          let cy = obj.y + obj.height / 2;
           if (
             obj.type === "line" &&
             obj.x2 !== undefined &&
             obj.y2 !== undefined
           ) {
-            ox = Math.min(obj.x, obj.x2);
-            oy = Math.min(obj.y, obj.y2);
-            ow = Math.abs(obj.x - obj.x2);
-            oh = Math.abs(obj.y - obj.y2);
+            cx = (obj.x + obj.x2) / 2;
+            cy = (obj.y + obj.y2) / 2;
           }
-          minX = Math.min(minX, ox);
-          minY = Math.min(minY, oy);
-          maxX = Math.max(maxX, ox + ow);
-          maxY = Math.max(maxY, oy + oh);
+
+          ctx.translate(cx, cy);
+          ctx.rotate(obj.rotation || 0);
+          ctx.translate(-cx, -cy);
+
+          // Draw bounding box (local space)
+          let bx = obj.x,
+            by = obj.y,
+            bw = obj.width,
+            bh = obj.height;
+          if (
+            obj.type === "line" &&
+            obj.x2 !== undefined &&
+            obj.y2 !== undefined
+          ) {
+            // For line, bounding box is min/max
+            bx = Math.min(obj.x, obj.x2);
+            by = Math.min(obj.y, obj.y2);
+            bw = Math.abs(obj.x - obj.x2);
+            bh = Math.abs(obj.y - obj.y2);
+          }
+          ctx.strokeRect(bx, by, bw, bh);
+
+          // Draw Resize Handles (8)
+          const handleSize = 8 / zoom;
+          const hHalf = handleSize / 2;
+
+          ctx.fillStyle = "white";
+          ctx.strokeStyle = "black";
+
+          // Corners: NW, NE, SE, SW
+          const corners = [
+            { x: bx, y: by }, // NW
+            { x: bx + bw, y: by }, // NE
+            { x: bx + bw, y: by + bh }, // SE
+            { x: bx, y: by + bh }, // SW
+            // Sides: N, E, S, W
+            { x: bx + bw / 2, y: by }, // N
+            { x: bx + bw, y: by + bh / 2 }, // E
+            { x: bx + bw / 2, y: by + bh }, // S
+            { x: bx, y: by + bh / 2 }, // W
+          ];
+
+          corners.forEach((p) => {
+            ctx.beginPath();
+            ctx.rect(p.x - hHalf, p.y - hHalf, handleSize, handleSize);
+            ctx.fill();
+            ctx.stroke();
+          });
+
+          // Draw Rotate Handle (Top)
+          const rotDist = 20 / zoom;
+          const rx = bx + bw / 2;
+          const ry = by - rotDist;
+
+          ctx.beginPath();
+          ctx.moveTo(rx, by);
+          ctx.lineTo(rx, ry);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.arc(rx, ry, handleSize / 1.5, 0, Math.PI * 2);
+          ctx.fillStyle = "white";
+          ctx.fill();
+          ctx.stroke();
+        }
+      } else {
+        // Multi-selection: Axis-aligned bounding box of all
+        let minX = Infinity,
+          minY = Infinity,
+          maxX = -Infinity,
+          maxY = -Infinity;
+
+        for (const obj of objects) {
+          if (selectedIds.has(obj.id)) {
+            let ox = obj.x,
+              oy = obj.y,
+              ow = obj.width,
+              oh = obj.height;
+            if (
+              obj.type === "line" &&
+              obj.x2 !== undefined &&
+              obj.y2 !== undefined
+            ) {
+              ox = Math.min(obj.x, obj.x2);
+              oy = Math.min(obj.y, obj.y2);
+              ow = Math.abs(obj.x - obj.x2);
+              oh = Math.abs(obj.y - obj.y2);
+            }
+            minX = Math.min(minX, ox);
+            minY = Math.min(minY, oy);
+            maxX = Math.max(maxX, ox + ow);
+            maxY = Math.max(maxY, oy + oh);
+          }
+        }
+        if (minX !== Infinity) {
+          ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
         }
       }
-      if (minX !== Infinity) {
-        ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
-      }
-    }
 
-    ctx.restore();
-    ctx.restore();
+      ctx.restore();
+    } // Close selectedIds.size > 0 block
 
     // Marquee Selection
     if (selectionRect) {
-      ctx.save();
       ctx.fillStyle = "rgba(33, 150, 243, 0.2)";
       ctx.strokeStyle = "#2196F3";
       ctx.lineWidth = 1 / zoom;
@@ -484,8 +564,30 @@
         selectionRect.w,
         selectionRect.h,
       );
-      ctx.restore();
     }
+  }
+
+  function drawGuides(ctx: CanvasRenderingContext2D) {
+    if (activeGuides.length === 0) return;
+
+    ctx.save();
+    ctx.strokeStyle = "#ff00ff"; // Magenta for visibility
+    ctx.lineWidth = 1 / zoom;
+    ctx.setLineDash([4 / zoom, 4 / zoom]); // Dashed line
+
+    for (const guide of activeGuides) {
+      ctx.beginPath();
+      if (guide.type === "vertical") {
+        ctx.moveTo(guide.offset, guide.start);
+        ctx.lineTo(guide.offset, guide.end);
+      } else {
+        ctx.moveTo(guide.start, guide.offset);
+        ctx.lineTo(guide.end, guide.offset);
+      }
+      ctx.stroke();
+    }
+
+    ctx.restore();
   }
 
   function drawGrid(context: CanvasRenderingContext2D) {
@@ -681,8 +783,411 @@
     }
   }
 
-  // --- Helper Functions ---
+  function alignSelected(
+    type: "left" | "center" | "right" | "top" | "middle" | "bottom",
+  ) {
+    if (selectedIds.size <= 1) return;
 
+    // Get bounding box of all selected objects
+    let minX = Infinity,
+      minY = Infinity;
+    let maxX = -Infinity,
+      maxY = -Infinity;
+
+    for (const obj of objects) {
+      if (selectedIds.has(obj.id)) {
+        minX = Math.min(minX, obj.x);
+        minY = Math.min(minY, obj.y);
+        maxX = Math.max(maxX, obj.x + obj.width);
+        maxY = Math.max(maxY, obj.y + obj.height);
+      }
+    }
+
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    // Apply alignment
+    for (const obj of objects) {
+      if (selectedIds.has(obj.id)) {
+        switch (type) {
+          case "left":
+            obj.x = minX;
+            break;
+          case "center":
+            obj.x = centerX - obj.width / 2;
+            break;
+          case "right":
+            obj.x = maxX - obj.width;
+            break;
+          case "top":
+            obj.y = minY;
+            break;
+          case "middle":
+            obj.y = centerY - obj.height / 2;
+            break;
+          case "bottom":
+            obj.y = maxY - obj.height;
+            break;
+        }
+
+        // Handle lines
+        if (
+          obj.type === "line" &&
+          obj.x2 !== undefined &&
+          obj.y2 !== undefined
+        ) {
+          const lineWidth = obj.x2 - obj.x;
+          const lineHeight = obj.y2 - obj.y;
+          obj.x2 = obj.x + lineWidth;
+          obj.y2 = obj.y + lineHeight;
+        }
+      }
+    }
+
+    saveHistory();
+  }
+
+  function distributeSelected(type: "horizontal" | "vertical") {
+    if (selectedIds.size <= 2) return;
+
+    const selectedObjects = objects.filter((obj) => selectedIds.has(obj.id));
+
+    if (type === "horizontal") {
+      // Sort by x position
+      selectedObjects.sort((a, b) => a.x - b.x);
+
+      const leftmost = selectedObjects[0].x;
+      const rightmost =
+        selectedObjects[selectedObjects.length - 1].x +
+        selectedObjects[selectedObjects.length - 1].width;
+      const totalGap = rightmost - leftmost;
+
+      // Calculate total width of objects
+      const totalWidth = selectedObjects.reduce(
+        (sum, obj) => sum + obj.width,
+        0,
+      );
+      const spacing = (totalGap - totalWidth) / (selectedObjects.length - 1);
+
+      let currentX = leftmost;
+      for (const obj of selectedObjects) {
+        obj.x = currentX;
+        currentX += obj.width + spacing;
+
+        // Handle lines
+        if (obj.type === "line" && obj.x2 !== undefined) {
+          const lineWidth = obj.x2 - obj.x;
+          obj.x2 = obj.x + lineWidth;
+        }
+      }
+    } else {
+      // Sort by y position
+      selectedObjects.sort((a, b) => a.y - b.y);
+
+      const topmost = selectedObjects[0].y;
+      const bottommost =
+        selectedObjects[selectedObjects.length - 1].y +
+        selectedObjects[selectedObjects.length - 1].height;
+      const totalGap = bottommost - topmost;
+
+      // Calculate total height of objects
+      const totalHeight = selectedObjects.reduce(
+        (sum, obj) => sum + obj.height,
+        0,
+      );
+      const spacing = (totalGap - totalHeight) / (selectedObjects.length - 1);
+
+      let currentY = topmost;
+      for (const obj of selectedObjects) {
+        obj.y = currentY;
+        currentY += obj.height + spacing;
+
+        // Handle lines
+        if (obj.type === "line" && obj.y2 !== undefined) {
+          const lineHeight = obj.y2 - obj.y;
+          obj.y2 = obj.y + lineHeight;
+        }
+      }
+    }
+
+    saveHistory();
+  }
+
+  function applyLayoutTemplate(
+    rows: number,
+    cols: number,
+    options: { spacing?: number; margin?: number } = {},
+  ) {
+    const spacing = options.spacing ?? 20;
+    const margin = options.margin ?? 40;
+
+    // Calculate available space
+    const availableWidth = width - 2 * margin - (cols - 1) * spacing;
+    const availableHeight = height - 2 * margin - (rows - 1) * spacing;
+
+    // Calculate panel dimensions
+    const panelWidth = availableWidth / cols;
+    const panelHeight = availableHeight / rows;
+
+    // Create panels
+    const newPanels: CanvasObject[] = [];
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const panel: CanvasObject = {
+          id: crypto.randomUUID(),
+          type: "rectangle",
+          x: margin + col * (panelWidth + spacing),
+          y: margin + row * (panelHeight + spacing),
+          width: panelWidth,
+          height: panelHeight,
+          fill: "#ffffff",
+          stroke: "#000000",
+          strokeWidth: 2,
+        };
+        newPanels.push(panel);
+      }
+    }
+
+    // Add panels to canvas
+    objects.push(...newPanels);
+
+    // Select all new panels
+    selectedIds.clear();
+    newPanels.forEach((panel) => selectedIds.add(panel.id));
+    selectedIds = new Set(selectedIds);
+
+    saveHistory();
+  }
+
+  function applyFontToSelected(
+    property: "fontFamily" | "fontSize" | "fontWeight" | "fontStyle",
+    value: string | number,
+  ) {
+    const selectedObjects = objects.filter(
+      (obj) => selectedIds.has(obj.id) && obj.type === "text",
+    );
+
+    if (selectedObjects.length === 0) return;
+
+    for (const obj of selectedObjects) {
+      if (property === "fontSize" && typeof value === "number") {
+        obj.fontSize = value;
+      } else if (typeof value === "string") {
+        if (property === "fontFamily") obj.fontFamily = value;
+        else if (property === "fontWeight")
+          obj.fontWeight = value as "normal" | "bold";
+        else if (property === "fontStyle")
+          obj.fontStyle = value as "normal" | "italic";
+      }
+    }
+
+    saveHistory();
+  }
+
+  async function importImage() {
+    try {
+      if (isTauri()) {
+        const selected = await open({
+          multiple: true,
+          filters: [
+            {
+              name: "Images",
+              extensions: [
+                "png",
+                "jpg",
+                "jpeg",
+                "webp",
+                "gif",
+                "bmp",
+                "tiff",
+                "tif",
+              ],
+            },
+          ],
+        });
+
+        if (selected === null) return;
+        const paths = Array.isArray(selected) ? selected : [selected];
+        console.log("Selected paths:", paths);
+
+        for (const path of paths) {
+          await addImageToCanvas(path);
+        }
+      } else {
+        // Browser fallback
+        imageInput.click();
+      }
+    } catch (err) {
+      console.error("Failed to open image:", err);
+    }
+  }
+
+  async function handleBrowserFileSelect(e: Event) {
+    const input = e.target as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      const file = input.files[0];
+      // Use Object URL for browser files
+      const objectUrl = URL.createObjectURL(file);
+
+      const img = new Image();
+      img.src = objectUrl;
+      await new Promise((r) => (img.onload = r));
+
+      const newImage: CanvasObject = {
+        id: crypto.randomUUID(),
+        type: "image",
+        x: (lastMousePos.x - offset.x) / zoom,
+        y: (lastMousePos.y - offset.y) / zoom,
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+        src: objectUrl,
+        naturalWidth: img.naturalWidth,
+        naturalHeight: img.naturalHeight,
+        rotation: 0,
+        fill: "transparent",
+      };
+
+      objects.push(newImage);
+      selectedIds.clear();
+      selectedIds.add(newImage.id);
+      selectedIds = new Set(selectedIds);
+      saveHistory();
+
+      // Reset input
+      input.value = "";
+    }
+  }
+
+  async function addImageToCanvas(path: string) {
+    console.log("Adding image from path:", path);
+    // Try standard asset URL first
+    let assetUrl = convertFileSrc(path);
+    console.log("Converted Asset URL:", assetUrl);
+
+    // Fallback: If asset URL fails, read file as Blob
+    // This happens if the Asset Protocol is not configured or blocked
+    let useBlob = false;
+
+    // Load image to get dimensions
+    const img = new Image();
+
+    try {
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = assetUrl;
+      });
+    } catch (e) {
+      console.warn("Standard asset URL failed, trying Blob fallback...", e);
+      try {
+        // Assuming `readFile` is imported from `@tauri-apps/plugin-fs`
+        // import { readFile } from '@tauri-apps/plugin-fs';
+        const bytes = await readFile(path);
+        const blob = new Blob([bytes]);
+        assetUrl = URL.createObjectURL(blob);
+        img.src = assetUrl;
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+        });
+        console.log("Blob fallback successful!");
+      } catch (err2) {
+        console.error("Blob fallback failed:", err2);
+        return; // Give up
+      }
+    }
+
+    const newImage: CanvasObject = {
+      id: crypto.randomUUID(),
+      type: "image",
+      x: (lastMousePos.x - offset.x) / zoom, // Place at mouse or center
+      y: (lastMousePos.y - offset.y) / zoom,
+      width: img.naturalWidth,
+      height: img.naturalHeight,
+      src: assetUrl,
+      naturalWidth: img.naturalWidth,
+      naturalHeight: img.naturalHeight,
+      rotation: 0,
+      fill: "transparent", // Placeholder
+    };
+
+    // Center on screen if mouse is far off?
+    // For now, use lastMousePos which tracks mouse movement
+
+    // Better: Place at center of view if mouse is not in canvas?
+    // Let's stick to simple logic for now.
+
+    objects.push(newImage);
+    selectedIds.clear();
+    selectedIds.add(newImage.id);
+    selectedIds = new Set(selectedIds);
+    saveHistory();
+  }
+
+  // Drag and Drop Handlers
+  async function onDrop(e: DragEvent) {
+    e.preventDefault();
+    isDragOver = false;
+    console.log("onDrop event:", e);
+
+    if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      const files = Array.from(e.dataTransfer.files);
+      console.log("Dropped files:", files);
+
+      for (const file of files) {
+        if (!file.type.startsWith("image/")) {
+          console.log("Skipping non-image file:", file.name, file.type);
+          continue;
+        }
+
+        try {
+          // Use Object URL for dropped files (safest cross-platform way for drop)
+          // This works even if we don't have the full path
+          const objectUrl = URL.createObjectURL(file);
+          console.log("Created Object URL for drop:", objectUrl);
+
+          const img = new Image();
+          img.src = objectUrl;
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = (err) => reject(err);
+          });
+
+          const newImage: CanvasObject = {
+            id: crypto.randomUUID(),
+            type: "image",
+            x: (e.clientX - rect.left - offset.x) / zoom,
+            y: (e.clientY - rect.top - offset.y) / zoom,
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+            src: objectUrl,
+            naturalWidth: img.naturalWidth,
+            naturalHeight: img.naturalHeight,
+            rotation: 0,
+            fill: "transparent",
+          };
+
+          objects.push(newImage);
+          console.log("Added dropped image to canvas:", newImage.id);
+        } catch (err) {
+          console.error("Failed to process dropped file:", file.name, err);
+        }
+      }
+      saveHistory();
+      // Force reactivity if needed, though push to proxy array should trigger it
+    } else {
+      console.log("No files in dataTransfer");
+    }
+    isDragOver = false;
+  }
+
+  // We need `rect` for drop position calculation
+  let rect = { left: 0, top: 0 };
+  function updateRect() {
+    if (canvas) rect = canvas.getBoundingClientRect();
+  }
+
+  // Helper Functions
   function worldToScreen(x: number, y: number) {
     return {
       x: x * zoom + offset.x,
@@ -690,11 +1195,104 @@
     };
   }
 
-  function screenToWorld(x: number, y: number) {
-    return {
-      x: (x - offset.x) / zoom,
-      y: (y - offset.y) / zoom,
-    };
+  function applyStyleToSelected(
+    property: "fill" | "stroke" | "strokeWidth" | "lineDash",
+    value: string | number | number[],
+  ) {
+    console.log(
+      "applyStyleToSelected called:",
+      property,
+      value,
+      "Switching:",
+      isSwitchingTool,
+      "Selected:",
+      selectedIds.size,
+    );
+    if (isSwitchingTool || mode.startsWith("draw_")) {
+      console.warn(
+        "BLOCKED applyStyleToSelected: Drawing tool active or switching.",
+      );
+      return;
+    }
+
+    const selectedObjects = objects.filter((obj) => selectedIds.has(obj.id));
+
+    if (selectedObjects.length === 0) {
+      console.log("No objects selected, ignoring style apply.");
+      return;
+    }
+
+    for (const obj of selectedObjects) {
+      if (property === "fill" && typeof value === "string") {
+        obj.fill = value;
+      } else if (property === "stroke" && typeof value === "string") {
+        obj.stroke = value;
+      } else if (property === "strokeWidth" && typeof value === "number") {
+        obj.strokeWidth = value;
+      } else if (property === "lineDash" && Array.isArray(value)) {
+        obj.lineDash = value;
+      }
+    }
+
+    saveHistory();
+  }
+
+  function updateObjectProperty(id: string, props: Partial<CanvasObject>) {
+    const obj = objects.find((o) => o.id === id);
+    if (!obj) return;
+
+    Object.assign(obj, props);
+    // Determine bounds if geometry changed?
+    // Usually simple assignment is enough for Svelte $state
+
+    saveHistory();
+  }
+
+  function selectSimilar() {
+    if (selectedIds.size !== 1) return;
+    const id = Array.from(selectedIds)[0];
+    const sourceObj = objects.find((o) => o.id === id);
+    if (!sourceObj) return;
+
+    const newSelection = new Set(selectedIds);
+
+    objects.forEach((obj) => {
+      if (obj.id === sourceObj.id) return;
+
+      if (isSimilar(sourceObj, obj)) {
+        newSelection.add(obj.id);
+      }
+    });
+
+    selectedIds = newSelection;
+  }
+
+  function isSimilar(a: CanvasObject, b: CanvasObject): boolean {
+    if (a.type !== b.type) return false;
+
+    if (a.type === "text") {
+      return (
+        a.fontFamily === b.fontFamily &&
+        a.fontSize === b.fontSize &&
+        a.fontWeight === b.fontWeight &&
+        a.fontStyle === b.fontStyle &&
+        a.fill === b.fill
+      );
+    }
+
+    // Shapes & Lines
+    // Compare arrays for lineDash
+    const dashA = a.lineDash || [];
+    const dashB = b.lineDash || [];
+    const dashMatch =
+      dashA.length === dashB.length && dashA.every((v, i) => v === dashB[i]);
+
+    return (
+      a.fill === b.fill &&
+      a.stroke === b.stroke &&
+      a.strokeWidth === b.strokeWidth &&
+      dashMatch
+    );
   }
 
   // Helper to get handle under mouse
@@ -809,24 +1407,69 @@
 
   // --- Interaction Handlers ---
 
+  // Canvas Sizing
+  let canvasWidth = $state(800);
+  let canvasHeight = $state(600);
+
+  function screenToWorld(cx: number, cy: number) {
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const x = cx - rect.left;
+    const y = cy - rect.top;
+
+    return {
+      x: (x - offset.x) / zoom,
+      y: (y - offset.y) / zoom,
+    };
+  }
+
   function handleWheel(event: WheelEvent) {
     event.preventDefault();
 
+    // Get mouse pos relative to canvas
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+
+    // Zoom
     if (event.ctrlKey) {
-      // Zoom
-      const zoomFactor = -event.deltaY * ZOOM_SENSITIVITY;
-      const newZoom = Math.min(Math.max(zoom + zoomFactor, MIN_ZOOM), MAX_ZOOM);
+      // Adjust sensitivity for trackpad vs mouse
+      // Chrome/Safari on Mac trackpad pinch creates ctrl+wheel events
+      // The deltaY is usually small for pinch.
 
-      // Calculate mouse position in world coordinates before zoom
-      const worldX = (event.clientX - offset.x) / zoom;
-      const worldY = (event.clientY - offset.y) / zoom;
+      // Standardize delta
+      let delta = -event.deltaY;
 
-      // Apply new zoom
+      // If the delta is small (trackpad), boost it?
+      // No, standard zoom_sensitivity might just be too low for pixel-based deltas.
+      // Let's create a dynamic sensitivity.
+
+      // For trackpads, deltaY is often just 1 or 2 per event but fires rapidly.
+      // For mouse wheels, it's 100+.
+
+      // If we are pinching, we want a smooth zoom.
+      // Let's increase the base sensitivity.
+      const factor = 0.01; // Increased from 0.001 (10x sensitivity)
+
+      const newZoom = Math.max(
+        MIN_ZOOM,
+        Math.min(MAX_ZOOM, zoom + delta * factor),
+      );
+
+      // Zoom towards mouse pointer
+      // 1. World before zoom
+      const wx = (mouseX - offset.x) / zoom;
+      const wy = (mouseY - offset.y) / zoom;
+
       zoom = newZoom;
 
-      // Adjust offset to keep mouse position stable in world coordinates
-      offset.x = event.clientX - worldX * zoom;
-      offset.y = event.clientY - worldY * zoom;
+      // 2. Adjust offset to keep World point at same Screen point
+      // screenX = wx * newZoom + newOffset
+      // newOffset = screenX - wx * newZoom
+      offset.x = mouseX - wx * zoom;
+      offset.y = mouseY - wy * zoom;
+
+      event.preventDefault();
     } else {
       // Pan
       offset.x -= event.deltaX;
@@ -847,7 +1490,6 @@
 
     // 2. Select / Move (Left click, no Space)
     if (event.button === 0 && !isSpacePressed) {
-      // Special case: Text Tool (Click to create)
       if (mode === "draw_text") {
         textInput = {
           visible: true,
@@ -862,14 +1504,58 @@
         return;
       }
 
+      if (mode === "draw_label") {
+        const labelText = getLabelText(nextLabelIndex);
+
+        // Use persisted label style or sensible default
+        const labelFill =
+          toolStyles["draw_label"]?.fill ||
+          (defaultFillColor === "#ffffff" ? "#000000" : defaultFillColor);
+
+        const newLabel: CanvasObject = {
+          id: crypto.randomUUID(),
+          type: "label",
+          x: worldPos.x,
+          y: worldPos.y,
+          width: 20, // Approx
+          height: 20,
+          text: labelText,
+          fontSize: 24,
+          fontWeight: "bold",
+          fontFamily: defaultFontFamily,
+          fill: labelFill,
+          // Custom label props
+          autoIncrement: true,
+          labelStyle: "uppercase",
+          parentheses: "none",
+        };
+
+        nextLabelIndex++;
+        if (objects.some((o) => o.id === newLabel.id)) {
+          console.error("CRITICAL: DUPLICATE ID GENERATED", newLabel.id);
+          newLabel.id = crypto.randomUUID(); // Retry
+        }
+        objects.push(newLabel);
+        selectedIds.clear();
+        selectedIds.add(newLabel.id);
+        selectedIds = new Set(selectedIds);
+        saveHistory();
+        return;
+      }
+
       if (
         mode === "draw_rectangle" ||
         mode === "draw_ellipse" ||
-        mode === "draw_line"
+        mode === "draw_line" ||
+        mode === "draw_scalebar"
       ) {
         // Start drawing
         isDragging = true;
         dragStart = { x: worldPos.x, y: worldPos.y };
+
+        const toolStyle = toolStyles[mode] || {};
+        const isScaleBar = mode === "draw_scalebar";
+
         pendingObject = {
           id: crypto.randomUUID(),
           type:
@@ -877,10 +1563,12 @@
               ? "rectangle"
               : mode === "draw_ellipse"
                 ? "ellipse"
-                : "line",
+                : isScaleBar
+                  ? "scalebar"
+                  : "line",
           x: worldPos.x,
           y: worldPos.y,
-          // For Rect/Ellipse
+          // For Rect/Ellipse/ScaleBar
           width: 0,
           height: 0,
           // For Line
@@ -888,9 +1576,18 @@
           y2: worldPos.y,
           arrowEnd: mode === "draw_line", // Auto-add arrow to end for now
 
-          fill: mode === "draw_rectangle" ? "#dddddd" : "#ccffcc",
-          stroke: "#333333",
-          strokeWidth: 2,
+          fill: toolStyle.fill || defaultFillColor,
+          stroke: isScaleBar
+            ? "#000000"
+            : toolStyle.stroke || defaultStrokeColor,
+          strokeWidth: isScaleBar
+            ? 4
+            : toolStyle.strokeWidth || defaultStrokeWidth,
+
+          // ScaleBar Props
+          physicalLength: 10,
+          units: "µm",
+          showText: true,
         };
         // Deselect others while drawing
         selectedIds.clear();
@@ -958,6 +1655,20 @@
           mode = "move";
           isDragging = true;
           dragStart = { x: event.clientX, y: event.clientY };
+
+          // Snapshot selection for move
+          selectionSnapshot.clear();
+          for (const id of selectedIds) {
+            const obj = objects.find((o) => o.id === id);
+            if (obj) {
+              selectionSnapshot.set(id, {
+                x: obj.x,
+                y: obj.y,
+                x2: obj.type === "line" ? obj.x2 : undefined,
+                y2: obj.type === "line" ? obj.y2 : undefined,
+              });
+            }
+          }
         } else {
           // Clicked on empty space
           if (!event.shiftKey) {
@@ -1054,8 +1765,10 @@
           width: 0,
           height: 0,
           text: textInput.value,
-          fontSize: 20,
-          fontFamily: "Arial",
+          fontSize: defaultFontSize,
+          fontFamily: defaultFontFamily,
+          fontWeight: defaultFontWeight,
+          fontStyle: defaultFontStyle,
           fill: "#333333",
         };
         objects.push(newObj);
@@ -1092,29 +1805,146 @@
         offset.x += e.clientX - lastMousePos.x;
         offset.y += e.clientY - lastMousePos.y;
       } else if (mode === "move") {
-        // Move all selected objects
-        // ... (existing move logic) ...
-        const moveObj = (obj: CanvasObject, dx: number, dy: number) => {
-          obj.x += dx;
-          obj.y += dy;
-          if (
-            obj.type === "line" &&
-            obj.x2 !== undefined &&
-            obj.y2 !== undefined
-          ) {
-            obj.x2 += dx;
-            obj.y2 += dy;
-          }
-          if (obj.type === "group" && obj.children) {
-            for (const child of obj.children) {
-              moveObj(child, dx, dy);
+        activeGuides = [];
+
+        // Calculate total movement from start
+        const dx = (e.clientX - dragStart.x) / zoom;
+        const dy = (e.clientY - dragStart.y) / zoom;
+
+        if (selectionSnapshot.size > 0) {
+          const primaryId = Array.from(selectedIds)[0];
+          const original = selectionSnapshot.get(primaryId);
+          const primaryObj = objects.find((o) => o.id === primaryId);
+
+          let finalDx = dx;
+          let finalDy = dy;
+
+          if (original && primaryObj) {
+            // Determine limits
+            const threshold = SNAP_TOLERANCE / zoom;
+            let minDistX = threshold;
+            let minDistY = threshold;
+
+            // Current proposed positions based on raw mouse move
+            const newX = original.x + dx;
+            const newY = original.y + dy;
+
+            // Candidates on the moving object
+            const l = newX;
+            const c = newX + primaryObj.width / 2;
+            const r = newX + primaryObj.width;
+
+            const t = newY;
+            const m = newY + primaryObj.height / 2;
+            const b = newY + primaryObj.height;
+
+            // Object Snapping
+            for (const target of objects) {
+              if (selectedIds.has(target.id)) continue;
+
+              const tl = target.x;
+              const tc = target.x + target.width / 2;
+              const tr = target.x + target.width;
+
+              const tt = target.y;
+              const tm = target.y + target.height / 2;
+              const tb = target.y + target.height;
+
+              // Vertical Snaps (X axis)
+              const vTargets = [tl, tc, tr];
+              const vSources = [l, c, r];
+
+              for (const vt of vTargets) {
+                for (const vs of vSources) {
+                  const dist = Math.abs(vt - vs);
+                  if (dist < minDistX) {
+                    minDistX = dist;
+                    finalDx = dx + (vt - vs); // Adjust delta to snap
+
+                    // Create Guide
+                    activeGuides = activeGuides.filter(
+                      (g) => g.type !== "vertical",
+                    );
+                    activeGuides.push({
+                      type: "vertical",
+                      offset: vt,
+                      start: Math.min(newY, target.y) - 20 / zoom,
+                      end:
+                        Math.max(
+                          newY + primaryObj.height,
+                          target.y + target.height,
+                        ) +
+                        20 / zoom,
+                    });
+                  }
+                }
+              }
+
+              // Horizontal Snaps (Y axis)
+              const hTargets = [tt, tm, tb];
+              const hSources = [t, m, b];
+
+              for (const ht of hTargets) {
+                for (const hs of hSources) {
+                  const dist = Math.abs(ht - hs);
+                  if (dist < minDistY) {
+                    minDistY = dist;
+                    finalDy = dy + (ht - hs); // Adjust delta
+
+                    // Create Guide
+                    activeGuides = activeGuides.filter(
+                      (g) => g.type !== "horizontal",
+                    );
+                    activeGuides.push({
+                      type: "horizontal",
+                      offset: ht,
+                      start: Math.min(newX, target.x) - 20 / zoom,
+                      end:
+                        Math.max(
+                          newX + primaryObj.width,
+                          target.x + target.width,
+                        ) +
+                        20 / zoom,
+                    });
+                  }
+                }
+              }
+            }
+
+            // Grid Snapping (if no object snap found)
+            if (snapToGrid) {
+              if (minDistX >= threshold) {
+                const closestGridX = Math.round(l / gridSize) * gridSize;
+                if (Math.abs(closestGridX - l) < threshold) {
+                  finalDx = dx + (closestGridX - l);
+                  // No visual guide for grid snap usually, but could add one
+                }
+              }
+              if (minDistY >= threshold) {
+                const closestGridY = Math.round(t / gridSize) * gridSize;
+                if (Math.abs(closestGridY - t) < threshold) {
+                  finalDy = dy + (closestGridY - t);
+                }
+              }
             }
           }
-        };
 
-        for (const obj of objects) {
-          if (selectedIds.has(obj.id)) {
-            moveObj(obj, dx, dy);
+          // Apply finalized movement
+          for (const obj of objects) {
+            const init = selectionSnapshot.get(obj.id);
+            if (init) {
+              obj.x = init.x + finalDx;
+              obj.y = init.y + finalDy;
+
+              if (
+                obj.type === "line" &&
+                init.x2 !== undefined &&
+                init.y2 !== undefined
+              ) {
+                obj.x2 = init.x2 + finalDx;
+                obj.y2 = init.y2 + finalDy;
+              }
+            }
           }
         }
       } else if (mode === "rotate" && activeHandle && initialState) {
@@ -1124,7 +1954,11 @@
           // Center of object
           let cx = obj.x + obj.width / 2;
           let cy = obj.y + obj.height / 2;
-          if (obj.type === "line" && obj.x2) {
+          if (
+            obj.type === "line" &&
+            obj.x2 !== undefined &&
+            obj.y2 !== undefined
+          ) {
             cx = (obj.x + obj.x2) / 2;
             cy = (obj.y + obj.y2) / 2;
           }
@@ -1232,17 +2066,34 @@
         if (selectionRect) {
           selectionRect.w = worldPos.x - selectionRect.x;
           selectionRect.h = worldPos.y - selectionRect.y;
+          render(); // Show selection rectangle while dragging
         }
       } else if (
-        (mode === "draw_rectangle" || mode === "draw_ellipse") &&
+        (mode === "draw_rectangle" ||
+          mode === "draw_ellipse" ||
+          mode === "draw_scalebar") &&
         pendingObject
       ) {
         const currentWorld = screenToWorld(e.clientX, e.clientY);
         // Allow drawing in any direction
-        pendingObject.x = Math.min(dragStart.x, currentWorld.x);
-        pendingObject.y = Math.min(dragStart.y, currentWorld.y);
-        pendingObject.width = Math.abs(currentWorld.x - dragStart.x);
-        pendingObject.height = Math.abs(currentWorld.y - dragStart.y);
+
+        if (mode === "draw_scalebar") {
+          // Scale bar is always horizontal for drawing logic
+          pendingObject.width = Math.max(
+            20,
+            Math.abs(currentWorld.x - dragStart.x),
+          );
+          pendingObject.height = 30; // Sufficient for text + bar
+          // x handles direction
+          pendingObject.x =
+            currentWorld.x < dragStart.x ? currentWorld.x : dragStart.x;
+          pendingObject.y = dragStart.y; // Keep Y stable
+        } else {
+          pendingObject.x = Math.min(dragStart.x, currentWorld.x);
+          pendingObject.y = Math.min(dragStart.y, currentWorld.y);
+          pendingObject.width = Math.abs(currentWorld.x - dragStart.x);
+          pendingObject.height = Math.abs(currentWorld.y - dragStart.y);
+        }
       } else if (mode === "draw_line" && pendingObject) {
         const currentWorld = screenToWorld(e.clientX, e.clientY);
         pendingObject.x2 = currentWorld.x;
@@ -1265,6 +2116,7 @@
   }
 
   function onMouseUp() {
+    activeGuides = []; // Clear guides
     if (mode === "marquee" && selectionRect) {
       // Finalize selection
       // Find objects inside selectionRect
@@ -1284,7 +2136,8 @@
     } else if (
       (mode === "draw_rectangle" ||
         mode === "draw_ellipse" ||
-        mode === "draw_line") &&
+        mode === "draw_line" ||
+        mode === "draw_scalebar") &&
       pendingObject
     ) {
       // Finalize drawing
@@ -1299,6 +2152,13 @@
       }
 
       if (valid) {
+        if (objects.some((o) => o.id === pendingObject!.id)) {
+          console.error(
+            "CRITICAL: DUPLICATE ID IN ONMOUSEUP",
+            pendingObject!.id,
+          );
+          pendingObject!.id = crypto.randomUUID();
+        }
         objects.push(pendingObject);
         // Select the new object
         selectedIds.clear();
@@ -1316,145 +2176,92 @@
     isDragging = false;
     if (mode === "pan") mode = "select";
   }
-  function exportSVG() {
-    // 1. Calculate bounding box
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
 
-    const expand = (o: CanvasObject) => {
-      minX = Math.min(minX, o.x);
-      minY = Math.min(minY, o.y);
-      maxX = Math.max(maxX, o.x + o.width);
-      maxY = Math.max(maxY, o.y + o.height);
-      if (o.type === "line" && o.x2 !== undefined && o.y2 !== undefined) {
-        minX = Math.min(minX, o.x2);
-        minY = Math.min(minY, o.y2);
-        maxX = Math.max(maxX, o.x2);
-        maxY = Math.max(maxY, o.y2);
-      }
-      if (o.type === "group" && o.children) {
-        o.children.forEach(expand);
-      }
-    };
+  let fileInput: HTMLInputElement;
 
-    objects.forEach(expand);
-
-    // Add padding
-    const padding = 20;
-    minX -= padding;
-    minY -= padding;
-    maxX += padding;
-    maxY += padding;
-    const w = maxX - minX;
-    const h = maxY - minY;
-
-    if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0) {
-      alert("Nothing to export!");
-      return;
+  function newProject() {
+    if (confirm("Create new project? Unsaved changes will be lost.")) {
+      objects = [];
+      selectedIds.clear();
+      saveHistory();
     }
+  }
 
-    // 2. Generate SVG content
-    let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${w} ${h}" width="${w}" height="${h}">\n`;
-
-    const objToSVG = (o: CanvasObject): string => {
-      if (o.type === "group" && o.children) {
-        return `<g>${o.children.map(objToSVG).join("\n")}</g>`;
-      }
-
-      let content = "";
-      if (o.type === "rectangle") {
-        content = `<rect x="${o.x}" y="${o.y}" width="${o.width}" height="${o.height}" fill="${o.fill}" stroke="${o.stroke || "none"}" stroke-width="${o.strokeWidth || 0}" />`;
-      } else if (o.type === "ellipse") {
-        content = `<ellipse cx="${o.x + o.width / 2}" cy="${o.y + o.height / 2}" rx="${o.width / 2}" ry="${o.height / 2}" fill="${o.fill}" stroke="${o.stroke || "none"}" stroke-width="${o.strokeWidth || 0}" />`;
-      } else if (o.type === "line") {
-        const x2 = o.x2 ?? o.x;
-        const y2 = o.y2 ?? o.y;
-        content = `<line x1="${o.x}" y1="${o.y}" x2="${x2}" y2="${y2}" stroke="${o.stroke || "black"}" stroke-width="${o.strokeWidth || 2}" />`;
-        // Simple arrowhead (manual)
-        if (o.arrowEnd) {
-          const angle = Math.atan2(y2 - o.y, x2 - o.x);
-          const headLen = 10;
-          const ax1 = x2 - headLen * Math.cos(angle - Math.PI / 6);
-          const ay1 = y2 - headLen * Math.sin(angle - Math.PI / 6);
-          const ax2 = x2 - headLen * Math.cos(angle + Math.PI / 6);
-          const ay2 = y2 - headLen * Math.sin(angle + Math.PI / 6);
-          content += `\n<polygon points="${x2},${y2} ${ax1},${ay1} ${ax2},${ay2}" fill="${o.stroke || "black"}" />`;
-        }
-      } else if (o.type === "text" && o.text) {
-        content = `<text x="${o.x}" y="${o.y}" font-family="${o.fontFamily}" font-size="${o.fontSize}" fill="${o.fill}" dominant-baseline="hanging">${o.text}</text>`;
-      }
-      return content;
-    };
-
-    svgContent += objects.map(objToSVG).join("\n");
-    svgContent += "\n</svg>";
-
-    // 3. Download
-    const blob = new Blob([svgContent], { type: "image/svg+xml" });
+  function saveProject() {
+    const data = JSON.stringify(objects, null, 2);
+    const blob = new Blob([data], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "scifigura_export.svg";
+    a.download = "scifigura_project.json";
     a.click();
     URL.revokeObjectURL(url);
   }
 
-  function exportPNG() {
-    // 1. Calculate bounds (Reuse logic or similar)
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-    const expand = (o: CanvasObject) => {
-      minX = Math.min(minX, o.x);
-      minY = Math.min(minY, o.y);
-      maxX = Math.max(maxX, o.x + o.width);
-      maxY = Math.max(maxY, o.y + o.height);
-      if (o.type === "line" && o.x2 !== undefined && o.y2 !== undefined) {
-        minX = Math.min(minX, o.x2);
-        minY = Math.min(minY, o.y2);
-        maxX = Math.max(maxX, o.x2);
-        maxY = Math.max(maxY, o.y2);
+  function onFileSelect(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const json = e.target?.result as string;
+        objects = JSON.parse(json);
+        selectedIds.clear();
+        saveHistory();
+      } catch (err) {
+        alert("Failed to load project");
       }
-      if (o.type === "group" && o.children) o.children.forEach(expand);
     };
-    objects.forEach(expand);
-
-    const padding = 20;
-    minX -= padding;
-    minY -= padding;
-    maxX += padding;
-    maxY += padding;
-    const w = maxX - minX;
-    const h = maxY - minY;
-
-    if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0) {
-      alert("Nothing to export!");
-      return;
-    }
-
-    // 2. Create offscreen canvas
-    const offCanvas = document.createElement("canvas");
-    offCanvas.width = w;
-    offCanvas.height = h;
-    const offCtx = offCanvas.getContext("2d");
-    if (!offCtx) return;
-
-    // 3. Render
-    // Translate so minX, minY is at 0,0
-    offCtx.translate(-minX, -minY);
-
-    objects.forEach((obj) => drawObject(offCtx, obj));
-
-    // 4. Download
-    const url = offCanvas.toDataURL("image/png");
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "scifigura_export.png";
-    a.click();
+    reader.readAsText(file);
   }
+
+  async function handleExport() {
+    isExporting = true;
+    try {
+      const blob = await exportCanvas(objects, exportConfig, imageCache);
+      if (!blob) {
+        alert("Export failed: Empty canvas or error.");
+        isExporting = false;
+        return;
+      }
+
+      if (isTauri()) {
+        // Tauri Save Dialog
+        const ext = exportConfig.format;
+        const path = await save({
+          filters: [
+            {
+              name: exportConfig.format.toUpperCase(),
+              extensions: [ext],
+            },
+          ],
+        });
+
+        if (path) {
+          const buffer = await blob.arrayBuffer();
+          await writeFile(path, new Uint8Array(buffer));
+          showExportDialog = false;
+        }
+      } else {
+        // Web Fallback
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `figure_export.${exportConfig.format}`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showExportDialog = false;
+      }
+    } catch (err) {
+      console.error("Export error:", err);
+      alert("Export failed: " + err);
+    } finally {
+      isExporting = false;
+    }
+  }
+
+  // Legacy export functions replaced by dialog
+  // Keeping them momentarily or removing? Removing to clean up.
 </script>
 
 <svelte:window
@@ -1467,121 +2274,319 @@
   }}
 />
 
-<div class="toolbar">
-  <button class:active={mode === "select"} onclick={() => (mode = "select")}
-    >Select</button
-  >
-  <button
-    class:active={mode === "draw_rectangle"}
-    onclick={() => (mode = "draw_rectangle")}>Rectangle</button
-  >
-  <button
-    class:active={mode === "draw_ellipse"}
-    onclick={() => (mode = "draw_ellipse")}>Ellipse</button
-  >
-  <button
-    class:active={mode === "draw_line"}
-    onclick={() => (mode = "draw_line")}>Line</button
-  >
-  <button
-    class:active={mode === "draw_text"}
-    onclick={() => (mode = "draw_text")}>Text</button
-  >
-  <div
-    class="divider"
-    style="width: 1px; background: #ccc; margin: 0 5px;"
-  ></div>
-  <button onclick={exportSVG}>Exp SVG</button>
-  <button onclick={exportPNG}>Exp PNG</button>
-</div>
+<!-- Layout Container -->
+<div class="app-layout">
+  <!-- Left Sidebar: Toolbox -->
+  <Toolbox {mode} {setMode} {importImage} />
 
-<!-- 
-    Canvas fills the screen. 
-    Using visible width/height to fill container.
--->
-<canvas
-  bind:this={canvas}
-  onwheel={handleWheel}
-  onmousedown={onMouseDown}
-  onmousemove={onMouseMove}
-  onmouseup={onMouseUp}
-  onmouseleave={onMouseUp}
-  style="display: block; width: 100vw; height: 100vh; cursor: {isSpacePressed
-    ? isDragging
-      ? 'grabbing'
-      : 'grab'
-    : hoveredHandle
-      ? hoveredHandle === 'rotate'
-        ? 'alias'
-        : `${hoveredHandle}-resize`
-      : mode.startsWith('draw')
-        ? 'crosshair'
-        : 'default'};"
-></canvas>
-
-<div class="status-bar">
-  Zoom: {Math.round(zoom * 100)}% | World: {Math.round(
-    (lastMousePos.x - offset.x) / zoom,
-  )}, {Math.round((lastMousePos.y - offset.y) / zoom)}
-  | Grid: {showGrid ? "ON" : "OFF"} | Snap: {snapToGrid ? "ON" : "OFF"} | Mode: {mode}
-</div>
-
-{#if textInput.visible}
   <input
-    bind:this={textInputRef}
-    type="text"
-    bind:value={textInput.value}
-    onkeydown={handleTextInputKeydown}
-    style="position: fixed; left: {textInput.x}px; top: {textInput.y}px; z-index: 200; font-size: 20px; font-family: Arial; padding: 2px; border: 1px solid #2196f3; outline: none; background: white; color: black;"
-    placeholder="Type text..."
+    type="file"
+    accept="image/*"
+    style="display: none;"
+    bind:this={imageInput}
+    onchange={handleBrowserFileSelect}
   />
-{/if}
+
+  <input
+    type="file"
+    accept=".json"
+    bind:this={fileInput}
+    onchange={onFileSelect}
+    style="display: none;"
+  />
+
+  <!-- Center: Canvas Area -->
+  <div class="canvas-area">
+    <!-- Top Bar (Context/File) -->
+    <div class="top-bar">
+      <!-- File Operations -->
+      <div class="menu-group">
+        <button onclick={newProject} title="New Project (Ctrl+N)">New</button>
+        <button onclick={() => fileInput.click()} title="Open Project (Ctrl+O)"
+          >Open</button
+        >
+        <button onclick={saveProject} title="Save Project (Ctrl+S)">Save</button
+        >
+      </div>
+
+      <div class="divider-v"></div>
+
+      <div class="menu-group">
+        <button onclick={() => (showExportDialog = true)} title="Export Figure"
+          >Export...</button
+        >
+      </div>
+
+      <!-- Spacer -->
+      <div style="flex: 1;"></div>
+
+      <div class="menu-group">
+        <!-- Zoom Controls -->
+        <button
+          onclick={() => {
+            zoom = 1.0;
+            centerCanvas();
+          }}
+          title="Reset Zoom to 100%"
+          class="icon-btn"
+          style="width: 24px; height: 24px; padding: 0; display: flex; align-items: center; justify-content: center;"
+        >
+          ⟲
+        </button>
+        <div
+          style="display: flex; align-items: center; gap: 4px; background: #333; padding: 2px 6px; border-radius: 4px;"
+        >
+          <input
+            type="number"
+            value={Math.round(zoom * 100)}
+            onchange={(e) => {
+              const val = parseFloat(e.currentTarget.value);
+              if (!isNaN(val) && val > 0) {
+                zoom = val / 100;
+              }
+            }}
+            style="width: 36px; background: transparent; border: none; color: white; font-size: 11px; text-align: right; outline: none;"
+          />
+          <span style="font-size: 11px; color: #888;">%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 
+        Canvas fills the remaining area
+    -->
+    <canvas
+      bind:this={canvas}
+      bind:clientWidth={canvasWidth}
+      bind:clientHeight={canvasHeight}
+      width={canvasWidth}
+      height={canvasHeight}
+      onwheel={handleWheel}
+      onmousedown={onMouseDown}
+      onmousemove={onMouseMove}
+      onmouseup={onMouseUp}
+      onmouseleave={onMouseUp}
+      style="display: block; width: 100%; height: 100%; cursor: {isSpacePressed
+        ? isDragging
+          ? 'grabbing'
+          : 'grab'
+        : hoveredHandle
+          ? hoveredHandle === 'rotate'
+            ? 'alias'
+            : `${hoveredHandle}-resize`
+          : mode.startsWith('draw')
+            ? 'crosshair'
+            : 'default'};"
+    ></canvas>
+
+    <div class="status-bar">
+      World: {Math.round((lastMousePos.x - offset.x) / zoom)}, {Math.round(
+        (lastMousePos.y - offset.y) / zoom,
+      )}
+      | Grid: {showGrid ? "ON" : "OFF"} | Snap: {snapToGrid ? "ON" : "OFF"}
+    </div>
+
+    {#if textInput.visible}
+      <input
+        bind:this={textInputRef}
+        type="text"
+        bind:value={textInput.value}
+        onkeydown={handleTextInputKeydown}
+        style="position: fixed; left: {textInput.x}px; top: {textInput.y}px; z-index: 200; font-size: 20px; font-family: Arial; padding: 2px; border: 1px solid #2196f3; outline: none; background: white; color: black;"
+        placeholder="Type text..."
+      />
+    {/if}
+
+    {#if showExportDialog}
+      <!-- Export Dialog Overlay -->
+      <div
+        style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 2000;"
+      >
+        <div
+          style="background: #2c2c2c; padding: 20px; border-radius: 8px; width: 300px; color: white; border: 1px solid #444; box-shadow: 0 4px 12px rgba(0,0,0,0.5);"
+        >
+          <h3 style="margin-top: 0;">Export Figure</h3>
+
+          <div style="margin-bottom: 15px;">
+            <label
+              for="export-format"
+              style="display: block; margin-bottom: 5px; color: #ccc;"
+              >Format</label
+            >
+            <select
+              id="export-format"
+              bind:value={exportConfig.format}
+              style="width: 100%; padding: 5px; background: #444; color: white; border: 1px solid #555; border-radius: 4px;"
+            >
+              <option value="png">PNG (Raster)</option>
+              <option value="tiff">TIFF (Raster)</option>
+              <option value="svg">SVG (Vector)</option>
+            </select>
+          </div>
+
+          <div style="margin-bottom: 15px;">
+            <label
+              for="export-dpi"
+              style="display: block; margin-bottom: 5px; color: #ccc;"
+              >Resolution (DPI)</label
+            >
+            <select
+              id="export-dpi"
+              bind:value={exportConfig.dpi}
+              disabled={exportConfig.format === "svg"}
+              style="width: 100%; padding: 5px; background: #444; color: white; border: 1px solid #555; border-radius: 4px; opacity: {exportConfig.format ===
+              'svg'
+                ? 0.5
+                : 1};"
+            >
+              <option value={72}>72 DPI (Screen)</option>
+              <option value={300}>300 DPI (Print)</option>
+              <option value={600}>600 DPI (High Res)</option>
+            </select>
+            {#if exportConfig.format === "svg"}
+              <div style="font-size: 11px; color: #888; margin-top: 5px;">
+                Resolution irrelevant for vector export
+              </div>
+            {/if}
+          </div>
+
+          <div
+            style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;"
+          >
+            <button
+              onclick={() => (showExportDialog = false)}
+              style="padding: 6px 12px; background: transparent; border: 1px solid #555; color: #ccc; border-radius: 4px; cursor: pointer;"
+            >
+              Cancel
+            </button>
+            <button
+              onclick={handleExport}
+              disabled={isExporting}
+              style="padding: 6px 12px; background: #2196F3; border: none; color: white; border-radius: 4px; cursor: pointer;"
+            >
+              {isExporting ? "Exporting..." : "Export"}
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Status Bar with Zoom Controls -->
+    <!-- REMOVED FLOATING STATUS BAR -->
+  </div>
+
+  {#if isDragOver}
+    <div
+      style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(33, 150, 243, 0.2); border: 4px dashed #2196F3; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 1000;"
+    >
+      <div
+        style="background: #2196F3; color: white; padding: 20px 40px; border-radius: 8px; font-weight: bold; font-size: 24px;"
+      >
+        Drop Image to Import
+      </div>
+    </div>
+  {/if}
+
+  <!-- Right Sidebar: Properties -->
+  <PropertiesPanel
+    selection={selectedObjects}
+    updateObject={updateObjectProperty}
+    bind:defaultFillColor
+    bind:defaultStrokeColor
+    bind:defaultStrokeWidth
+    bind:defaultLineDash
+    bind:defaultFontFamily
+    bind:defaultFontSize
+    bind:defaultFontWeight
+    bind:defaultFontStyle
+    {applyStyleToSelected}
+    {applyFontToSelected}
+    {alignSelected}
+    {distributeSelected}
+    {resetLabelSequence}
+    onStyleChange={(prop, val) => {
+      // Intercept changes from PropertiesPanel to update Tool Styles
+      updateToolStyle(prop as any, val);
+    }}
+  />
+</div>
 
 <style>
-  .toolbar {
-    position: fixed;
-    top: 10px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #333;
-    padding: 5px;
-    border-radius: 4px;
+  .app-layout {
+    display: flex;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    background: #1e1e1e; /* Dark theme background */
+  }
+
+  .canvas-area {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: #333; /* Canvas background */
+  }
+
+  .top-bar {
+    height: 40px;
+    background: #2c2c2c;
+    border-bottom: 1px solid #1a1a1a;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    gap: 10px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    z-index: 5;
+  }
+
+  .menu-group {
     display: flex;
     gap: 5px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-    z-index: 100;
+    align-items: center;
   }
 
-  .toolbar button {
+  .divider-v {
+    width: 1px;
+    height: 20px;
     background: #444;
-    border: none;
-    color: #aaa;
-    padding: 5px 10px;
+  }
+
+  .top-bar button {
+    background: transparent;
+    border: 1px solid transparent;
+    color: #ccc;
+    padding: 4px 10px;
     border-radius: 3px;
     cursor: pointer;
+    font-size: 11px;
+    transition: all 0.2s;
   }
 
-  .toolbar button:hover {
-    background: #555;
+  .top-bar button:hover {
+    background: #444;
     color: white;
+    border-color: #555;
   }
 
-  .toolbar button.active {
-    background: #2196f3;
-    color: white;
+  /* Canvas element flex grow to fill space below top bar */
+  canvas {
+    flex: 1;
   }
 
   .status-bar {
-    position: fixed;
+    position: absolute;
     bottom: 0;
     left: 0;
     right: 0;
-    background: #333;
-    color: white;
-    padding: 5px 10px;
+    background: #2c2c2c;
+    color: #888;
+    padding: 2px 10px;
     font-family: monospace;
-    font-size: 12px;
-    pointer-events: none; /* Let clicks pass through */
+    font-size: 10px;
+    user-select: none;
     z-index: 100;
+    border-top: 1px solid #1a1a1a;
   }
 </style>

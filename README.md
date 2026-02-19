@@ -70,8 +70,8 @@ pnpm lint
 
 🚧 **MVP in Development** — Following the [6-month roadmap](https://github.com/feldaher/scifigura/milestones)
 
-**Current Milestone:** 1 - Bootstrap  
-**Next Up:** Canvas Foundation (zoomable canvas, basic shapes, rulers)
+**Current Milestone:** 5 - Expert/Import 📥
+**Next Up:** Polish & Beta (Cross-platform builds, user guide)
 
 See [open issues](https://github.com/feldaher/scifigura/issues) for detailed task breakdown.
 
