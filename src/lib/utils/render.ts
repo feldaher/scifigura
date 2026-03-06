@@ -1,5 +1,52 @@
 import type { CanvasObject } from '../types';
 
+const filterCache = new Map<string, HTMLCanvasElement>();
+
+function getFilteredImage(img: HTMLImageElement, b: number, c: number): HTMLImageElement | HTMLCanvasElement {
+  if (b === 100 && c === 100) return img;
+  
+  const key = `${img.src}_${b}_${c}`;
+  const cached = filterCache.get(key);
+  if (cached) return cached;
+  
+  // Clean up old entries for this exact image source to prevent memory leak while dragging sliders
+  for (const k of filterCache.keys()) {
+    if (k.startsWith(img.src + "_")) {
+      filterCache.delete(k);
+    }
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return img;
+  
+  ctx.drawImage(img, 0, 0);
+  try {
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imgData.data;
+    
+    const brightnessOffset = (b - 100) * 2.55; 
+    const contrastFactor = Math.max(0, c / 100);
+    const intercept = 128 * (1 - contrastFactor);
+    
+    for (let i = 0; i < data.length; i += 4) {
+      data[i]   = data[i]   * contrastFactor + intercept + brightnessOffset;
+      data[i+1] = data[i+1] * contrastFactor + intercept + brightnessOffset;
+      data[i+2] = data[i+2] * contrastFactor + intercept + brightnessOffset;
+    }
+    
+    ctx.putImageData(imgData, 0, 0);
+    filterCache.set(key, canvas);
+    return canvas;
+  } catch (err) {
+    // If canvas is tainted (CORS), pixel manipulation fails. Fallback to original image.
+    console.warn("Canvas tainted, cannot apply pixel filters:", err);
+    return img;
+  }
+}
+
 /**
  * Draws a single object onto the provided canvas context.
  * Handles transformations, shapes, text, images, and recursive groups.
@@ -126,26 +173,10 @@ export function drawObject(
     // Draw Image
     let img = imageCache.get(obj.src);
     if (!img) {
-      // In render.ts used by export, we might assume images are loaded or load them synchronously if possible?
-      // Actually export logic will check image cache first.
-      // If used in Canvas.svelte, it handles loading.
-      // For now, duplicate exact logic:
-      
-      // Note: We cannot assign to imageCache if it's a Prop/State from outside easily without return?
-      // Actually Map is mutable by reference.
-      
-      console.log("Loading image for render:", obj.src);
       img = new Image();
       img.src = obj.src;
-      img.onload = () => {
-        console.log("Image loaded for render:", obj.src);
-        // Canvas.svelte logic would trigger re-render here. 
-        // We can't easily trigger re-render from here without a callback.
-        // But for export, we assume images are loaded.
-      };
-      img.onerror = (e) => {
-        console.error("Failed to load image for render:", obj.src, e);
-      };
+      img.onload = () => {};
+      img.onerror = (e) => { console.error("Failed to load image for render:", obj.src, e); };
       imageCache.set(obj.src, img);
     }
 
@@ -153,7 +184,27 @@ export function drawObject(
       if (img.naturalWidth === 0) {
         console.warn("Image complete but naturalWidth is 0:", obj.src);
       }
-      ctx.drawImage(img, obj.x, obj.y, obj.width, obj.height);
+
+      // Apply image adjustments via pixel cache (bypasses browser ctx.filter bugs)
+      const b = obj.brightness ?? 100;
+      const c = obj.contrast ?? 100;
+      const filteredImg = getFilteredImage(img, b, c);
+
+      // Crop support: compute source rect
+      const nw = img.naturalWidth || obj.width;
+      const nh = img.naturalHeight || obj.height;
+      const cl = obj.cropLeft   ?? 0;
+      const ct = obj.cropTop    ?? 0;
+      const cr = obj.cropRight  ?? 0;
+      const cb = obj.cropBottom ?? 0;
+      const sx = cl;
+      const sy = ct;
+      const sw = nw - cl - cr;
+      const sh = nh - ct - cb;
+
+      if (sw > 0 && sh > 0) {
+        ctx.drawImage(filteredImg, sx, sy, sw, sh, obj.x, obj.y, obj.width, obj.height);
+      }
     } else {
       // Placeholder while loading
       ctx.fillStyle = "#ccc";
@@ -162,7 +213,7 @@ export function drawObject(
       ctx.font = "12px sans-serif";
       ctx.fillText("Loading...", obj.x + 5, obj.y + 20);
     }
-  }
+  } // end image
 
   if (obj.stroke || obj.type === "line") {
     ctx.strokeStyle = obj.stroke || "#000";
@@ -180,39 +231,63 @@ export function drawObject(
     obj.y2 !== undefined
   ) {
     const angle = Math.atan2(obj.y2 - obj.y, obj.x2 - obj.x);
-    const headLen = 10 * (obj.strokeWidth || 1) * 0.5 + 5; // Approx size
+    const sw = obj.strokeWidth || 1;
+    const headLen = 10 * sw * 0.5 + 7;
+    const style = obj.arrowheadStyle ?? "filled";
+    const strokeColor = obj.stroke || "#000";
+    const fillColor = obj.arrowFillColor ?? strokeColor;
 
-    ctx.fillStyle = obj.stroke || "#000";
+    function drawHead(tipX: number, tipY: number, ang: number) {
+      ctx.save();
+      ctx.strokeStyle = strokeColor;
+      ctx.fillStyle = fillColor;
+      ctx.lineWidth = sw;
+      ctx.setLineDash([]);
 
-    if (obj.arrowEnd) {
-      ctx.beginPath();
-      ctx.moveTo(obj.x2, obj.y2);
-      ctx.lineTo(
-        obj.x2 - headLen * Math.cos(angle - Math.PI / 6),
-        obj.y2 - headLen * Math.sin(angle - Math.PI / 6),
-      );
-      ctx.lineTo(
-        obj.x2 - headLen * Math.cos(angle + Math.PI / 6),
-        obj.y2 - headLen * Math.sin(angle + Math.PI / 6),
-      );
-      ctx.closePath();
-      ctx.fill();
+      if (style === "filled") {
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(tipX - headLen * Math.cos(ang - Math.PI / 7), tipY - headLen * Math.sin(ang - Math.PI / 7));
+        ctx.lineTo(tipX - headLen * Math.cos(ang + Math.PI / 7), tipY - headLen * Math.sin(ang + Math.PI / 7));
+        ctx.closePath();
+        ctx.fill();
+      } else if (style === "open") {
+        ctx.beginPath();
+        ctx.moveTo(tipX - headLen * Math.cos(ang - Math.PI / 6), tipY - headLen * Math.sin(ang - Math.PI / 6));
+        ctx.lineTo(tipX, tipY);
+        ctx.lineTo(tipX - headLen * Math.cos(ang + Math.PI / 6), tipY - headLen * Math.sin(ang + Math.PI / 6));
+        ctx.stroke();
+      } else if (style === "diamond") {
+        const mid = headLen / 2;
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY); // front tip
+        ctx.lineTo(tipX - mid * Math.cos(ang - Math.PI / 4), tipY - mid * Math.sin(ang - Math.PI / 4));
+        ctx.lineTo(tipX - headLen * Math.cos(ang), tipY - headLen * Math.sin(ang)); // back tip
+        ctx.lineTo(tipX - mid * Math.cos(ang + Math.PI / 4), tipY - mid * Math.sin(ang + Math.PI / 4));
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      } else if (style === "circle") {
+        const r = headLen * 0.4;
+        const cx = tipX - r * Math.cos(ang);
+        const cy = tipY - r * Math.sin(ang);
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
+      } else if (style === "bar") {
+        const perp = ang + Math.PI / 2;
+        const bl = headLen * 0.6;
+        ctx.beginPath();
+        ctx.moveTo(tipX + bl * Math.cos(perp), tipY + bl * Math.sin(perp));
+        ctx.lineTo(tipX - bl * Math.cos(perp), tipY - bl * Math.sin(perp));
+        ctx.stroke();
+      }
+      ctx.restore();
     }
 
-    if (obj.arrowStart) {
-      ctx.beginPath();
-      ctx.moveTo(obj.x, obj.y);
-      ctx.lineTo(
-        obj.x + headLen * Math.cos(angle - Math.PI / 6),
-        obj.y + headLen * Math.sin(angle - Math.PI / 6),
-      );
-      ctx.lineTo(
-        obj.x + headLen * Math.cos(angle + Math.PI / 6),
-        obj.y + headLen * Math.sin(angle + Math.PI / 6),
-      );
-      ctx.closePath();
-      ctx.fill();
-    }
+    if (obj.arrowEnd) drawHead(obj.x2, obj.y2, angle);
+    if (obj.arrowStart) drawHead(obj.x, obj.y, angle + Math.PI);
   }
   ctx.restore();
 }

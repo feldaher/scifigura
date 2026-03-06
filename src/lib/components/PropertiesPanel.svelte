@@ -19,13 +19,15 @@
     // Action Handlers
     applyStyleToSelected,
     applyFontToSelected,
-    alignSelected,
-    distributeSelected,
     resetLabelSequence,
     onStyleChange,
   }: {
     selection: CanvasObject[];
-    updateObject: (id: string, props: Partial<CanvasObject>) => void;
+    updateObject: (
+      id: string,
+      props: Partial<CanvasObject>,
+      save?: boolean,
+    ) => void;
 
     defaultFillColor: string;
     defaultStrokeColor: string;
@@ -39,8 +41,6 @@
 
     applyStyleToSelected: (prop: any, val: any) => void;
     applyFontToSelected: (prop: any, val: any) => void;
-    alignSelected: (align: any) => void;
-    distributeSelected: (dist: any) => void;
     resetLabelSequence?: () => void;
 
     // Optional callback for tracking style changes (for tool persistence)
@@ -88,20 +88,38 @@
 <aside class="properties-panel">
   <!-- Header / Context Title -->
   <header>
-    {#if selection.length === 0}
-      <h3>Defaults</h3>
-      {#if resetLabelSequence}
-        <button
-          onclick={resetLabelSequence}
-          title="Reset Label Counter to A"
-          style="font-size: 10px; padding: 2px 6px;">Reset Labels</button
+    <div class="header-row">
+      {#if selection.length === 0}
+        <span class="header-title">Canvas</span>
+        {#if resetLabelSequence}
+          <button
+            class="reset-btn"
+            onclick={resetLabelSequence}
+            title="Reset Label Counter to A"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+            </svg>
+            Reset Labels
+          </button>
+        {/if}
+      {:else if selection.length === 1}
+        <span class="header-title"
+          >{selection[0].type.charAt(0).toUpperCase() +
+            selection[0].type.slice(1)}</span
         >
+      {:else}
+        <span class="header-title">{selection.length} Selected</span>
       {/if}
-    {:else if selection.length === 1}
-      <h3>{selection[0].type}</h3>
-    {:else}
-      <h3>Selection ({selection.length})</h3>
-    {/if}
+    </div>
   </header>
 
   <div class="content">
@@ -293,12 +311,36 @@
               onStyleChange?.("fontFamily", defaultFontFamily);
             }}
           >
-            <option value="Arial">Arial</option>
-            <option value="Helvetica">Helvetica</option>
-            <option value="Times New Roman">Times New Roman</option>
-            <option value="Courier New">Courier New</option>
-            <option value="Verdana">Verdana</option>
-            <option value="Georgia">Georgia</option>
+            <optgroup label="Sans-serif">
+              <option value="Arial">Arial</option>
+              <option value="Helvetica">Helvetica</option>
+              <option value="Helvetica Neue">Helvetica Neue</option>
+              <option value="Calibri">Calibri</option>
+              <option value="Gill Sans">Gill Sans</option>
+              <option value="Verdana">Verdana</option>
+              <option value="Tahoma">Tahoma</option>
+              <option value="Myriad Pro">Myriad Pro</option>
+            </optgroup>
+            <optgroup label="Serif">
+              <option value="Times New Roman">Times New Roman</option>
+              <option value="Georgia">Georgia</option>
+              <option value="Palatino">Palatino</option>
+              <option value="Garamond">Garamond</option>
+              <option value="Book Antiqua">Book Antiqua</option>
+            </optgroup>
+            <optgroup label="Monospace">
+              <option value="Courier New">Courier New</option>
+              <option value="Consolas">Consolas</option>
+              <option value="Menlo">Menlo</option>
+              <option value="Monaco">Monaco</option>
+              <option value="Lucida Console">Lucida Console</option>
+            </optgroup>
+            <optgroup label="Scientific / Special">
+              <option value="STIX Two Text">STIX Two Text</option>
+              <option value="Computer Modern">Computer Modern</option>
+              <option value="Latin Modern">Latin Modern</option>
+              <option value="Symbol">Symbol</option>
+            </optgroup>
           </select>
 
           <div class="row gap-2">
@@ -345,44 +387,79 @@
     {/if}
 
     <!-- 4. Align / Distribute (Multi-selection) -->
-    {#if selection.length > 1}
+    <!-- 5. Line/Arrow Settings -->
+    {#if selection.length === 1 && selection[0].type === "line"}
+      {@const obj = selection[0]}
       <div class="section">
-        <h4>Alignment</h4>
-        <div class="icon-grid">
-          <button onclick={() => alignSelected("left")} title="Align Left"
-            >⫷</button
-          >
-          <button onclick={() => alignSelected("center")} title="Align CenterX"
-            >∥</button
-          >
-          <button onclick={() => alignSelected("right")} title="Align Right"
-            >⫸</button
-          >
-          <button onclick={() => alignSelected("top")} title="Align Top"
-            >T</button
-          >
-          <button onclick={() => alignSelected("middle")} title="Align MiddleY"
-            >M</button
-          >
-          <button onclick={() => alignSelected("bottom")} title="Align Bottom"
-            >B</button
-          >
-        </div>
+        <h4>Arrowhead</h4>
+        <div class="col gap-2">
+          <!-- Start/End Toggles -->
+          <div class="row gap-2">
+            <label class="row items-center gap-1 flex-1">
+              <input
+                type="checkbox"
+                checked={obj.arrowStart}
+                onchange={(e) => {
+                  updateObject(obj.id, { arrowStart: e.currentTarget.checked });
+                  onStyleChange?.("arrowStart", e.currentTarget.checked);
+                }}
+              />
+              <span>Start</span>
+            </label>
+            <label class="row items-center gap-1 flex-1">
+              <input
+                type="checkbox"
+                checked={obj.arrowEnd}
+                onchange={(e) => {
+                  updateObject(obj.id, { arrowEnd: e.currentTarget.checked });
+                  onStyleChange?.("arrowEnd", e.currentTarget.checked);
+                }}
+              />
+              <span>End</span>
+            </label>
+          </div>
 
-        <h4 class="mt-2">Distribution</h4>
-        <div class="icon-grid">
-          <button
-            onclick={() => distributeSelected("horizontal")}
-            title="Distribute Horz">↔</button
-          >
-          <button
-            onclick={() => distributeSelected("vertical")}
-            title="Distribute Vert">↕</button
-          >
+          <!-- Style Picker -->
+          <label>
+            <span>Style</span>
+            <select
+              value={obj.arrowheadStyle || "filled"}
+              onchange={(e) => {
+                updateObject(obj.id, {
+                  arrowheadStyle: e.currentTarget.value as any,
+                });
+                onStyleChange?.("arrowheadStyle", e.currentTarget.value);
+              }}
+            >
+              <option value="filled">Filled Triangle</option>
+              <option value="open">Open Chevron</option>
+              <option value="diamond">Diamond</option>
+              <option value="circle">Circle</option>
+              <option value="bar">Bar (Dimension)</option>
+            </select>
+          </label>
+
+          <!-- Arrow Fill Color -->
+          <div class="row items-center">
+            <div class="color-swatch-wrapper">
+              <input
+                type="color"
+                value={obj.arrowFillColor || obj.stroke || "#000000"}
+                oninput={(e) => {
+                  updateObject(obj.id, {
+                    arrowFillColor: e.currentTarget.value,
+                  });
+                  onStyleChange?.("arrowFillColor", e.currentTarget.value);
+                }}
+              />
+            </div>
+            <span class="label">Arrow Fill</span>
+          </div>
         </div>
       </div>
     {/if}
-    <!-- 5. Scale Bar Settings -->
+
+    <!-- 6. Scale Bar Settings -->
     {#if selection.length === 1 && selection[0].type === "scalebar"}
       {@const obj = selection[0]}
       <div class="section">
@@ -425,6 +502,80 @@
         </div>
       </div>
     {/if}
+
+    <!-- 6. Image Editing -->
+    {#if selection.length === 1 && selection[0].type === "image"}
+      {@const obj = selection[0]}
+      <div class="section">
+        <div class="header-row" style="margin-bottom: 10px;">
+          <h4 style="margin: 0;">Image</h4>
+          <button
+            class="reset-btn"
+            title="Reset brightness/contrast"
+            onclick={() => {
+              updateObject(obj.id, { brightness: 100, contrast: 100 });
+              onStyleChange?.("brightness", 100);
+            }}
+          >
+            Reset
+          </button>
+        </div>
+        <div class="col gap-2">
+          <label>
+            <div class="row" style="justify-content: space-between;">
+              <span>Brightness</span>
+              <span>{Math.round(obj.brightness ?? 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="200"
+              step="1"
+              value={obj.brightness ?? 100}
+              style="--val: {(obj.brightness ?? 100) / 2}%"
+              oninput={(e) => {
+                const val = Number(e.currentTarget.value);
+                updateObject(obj.id, { brightness: val }, false);
+                onStyleChange?.("brightness", val);
+              }}
+              onchange={(e) => {
+                updateObject(
+                  obj.id,
+                  { brightness: Number(e.currentTarget.value) },
+                  true,
+                );
+              }}
+            />
+          </label>
+          <label>
+            <div class="row" style="justify-content: space-between;">
+              <span>Contrast</span>
+              <span>{Math.round(obj.contrast ?? 100)}%</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="200"
+              step="1"
+              value={obj.contrast ?? 100}
+              style="--val: {(obj.contrast ?? 100) / 2}%"
+              oninput={(e) => {
+                const val = Number(e.currentTarget.value);
+                updateObject(obj.id, { contrast: val }, false);
+                onStyleChange?.("contrast", val);
+              }}
+              onchange={(e) => {
+                updateObject(
+                  obj.id,
+                  { contrast: Number(e.currentTarget.value) },
+                  true,
+                );
+              }}
+            />
+          </label>
+        </div>
+      </div>
+    {/if}
   </div>
 </aside>
 
@@ -443,17 +594,46 @@
 
   header {
     padding: 10px 15px;
-    background: #333;
+    background: #2a2a2a;
     border-bottom: 1px solid #1a1a1a;
   }
 
-  header h3 {
-    font-size: 12px;
+  .header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .header-title {
+    font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
-    margin: 0;
-    color: #fff;
-    letter-spacing: 0.5px;
+    color: #888;
+    letter-spacing: 0.8px;
+  }
+
+  .reset-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: 1px solid #3a3a3a;
+    color: #666;
+    border-radius: 4px;
+    padding: 3px 7px;
+    font-size: 10px;
+    cursor: pointer;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+    white-space: nowrap;
+  }
+  .reset-btn:hover {
+    background: #333;
+    color: #aaa;
+    border-color: #555;
   }
 
   .content {
@@ -509,6 +689,44 @@
     border-color: #2196f3;
     outline: none;
   }
+
+  /* Range Sliders */
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 12px; /* Track height */
+    background: linear-gradient(
+      to right,
+      #d3763f var(--val, 50%),
+      #1a1a1a var(--val, 50%)
+    ); /* Muted orange and dark grey */
+    border-radius: 6px; /* Rounded track */
+    outline: none;
+    margin: 6px 0;
+    padding: 0;
+    border: 1px solid #444; /* Match other input borders */
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 10px; /* Round thumb */
+    height: 10px;
+    border-radius: 50%;
+    background: #cccccc;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+    margin-top: 0px;
+  }
+
+  input[type="range"]:focus::-webkit-slider-thumb {
+    box-shadow:
+      0 0 0 2px #d3763f,
+      0 1px 3px rgba(0, 0, 0, 0.5);
+  }
+
+  /* End Range Sliders */
 
   .unit-input {
     position: relative;

@@ -5,14 +5,22 @@ export interface CanvasObject {
   y: number;
   width: number;
   height: number;
+  
+  // Layer system properties
+  name?: string;
+  locked?: boolean;
+  hidden?: boolean;
+
   // For groups
   children?: CanvasObject[];
 
-  // For lines
+  // For lines / arrows
   x2?: number;
   y2?: number;
   arrowStart?: boolean;
   arrowEnd?: boolean;
+  arrowheadStyle?: "filled" | "open" | "diamond" | "circle" | "bar";
+  arrowFillColor?: string; // Arrowhead fill color (defaults to stroke color)
 
   // For text & labels
   text?: string;
@@ -33,8 +41,17 @@ export interface CanvasObject {
 
   // For images
   src?: string;
+  originalPath?: string;
   naturalWidth?: number;
   naturalHeight?: number;
+  // Non-destructive crop insets (pixels into the source image)
+  cropLeft?: number;
+  cropTop?: number;
+  cropRight?: number;
+  cropBottom?: number;
+  // Image adjustments (applied via canvas filter)
+  brightness?: number; // 0–200, default 100
+  contrast?: number;   // 0–200, default 100
 
   fill: string;
   stroke?: string;

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  canvas { border: 1px solid black; }
+</style>
+</head>
+<body>
+<canvas id="c" width="400" height="200"></canvas>
+<script>
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  
+  // Create a red square
+  const img = new Image();
+  img.src = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="; // red pixel
+  
+  img.onload = () => {
+    // Left: Normal
+    ctx.drawImage(img, 0, 0, 100, 100);
+    
+    // Middle: Brightness
+    ctx.filter = 'brightness(0.5)';
+    ctx.drawImage(img, 150, 0, 100, 100);
+    
+    // Right: Contrast
+    ctx.filter = 'contrast(2.0)';
+    ctx.drawImage(img, 300, 0, 100, 100);
+    
+    // Reset
+    ctx.filter = 'none';
+  };
+</script>
+</body>
+</html>

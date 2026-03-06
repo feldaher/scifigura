@@ -1,7 +1,11 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import LayersPanel from "./LayersPanel.svelte";
   import PropertiesPanel from "./PropertiesPanel.svelte";
   import Toolbox from "./Toolbox.svelte";
+  import WelcomeScreen from "./WelcomeScreen.svelte";
+  import AboutDialog from "./AboutDialog.svelte";
+  import LayoutPresets from "./LayoutPresets.svelte";
   import type { CanvasObject, InteractionMode } from "../types";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { readFile, writeFile } from "@tauri-apps/plugin-fs";
@@ -90,6 +94,184 @@
     }
   }
 
+  // ── Alignment helpers ──────────────────────────────────────────────────────
+  /** Returns the AABB (axis-aligned bounding box) for a canvas object. */
+  function getObjectBounds(obj: CanvasObject) {
+    if (obj.type === "line" && obj.x2 !== undefined && obj.y2 !== undefined) {
+      const minX = Math.min(obj.x, obj.x2);
+      const minY = Math.min(obj.y, obj.y2);
+      return {
+        x: minX,
+        y: minY,
+        w: Math.abs(obj.x2 - obj.x),
+        h: Math.abs(obj.y2 - obj.y),
+      };
+    }
+    return { x: obj.x, y: obj.y, w: obj.width, h: obj.height };
+  }
+
+  /** Move an object by (dx, dy), translating line endpoints too. */
+  function translateObject(obj: CanvasObject, dx: number, dy: number) {
+    obj.x += dx;
+    obj.y += dy;
+    if (obj.x2 !== undefined) obj.x2 += dx;
+    if (obj.y2 !== undefined) obj.y2 += dy;
+  }
+
+  function alignLeft() {
+    const sel = objects.filter((o) => selectedIds.has(o.id));
+    if (sel.length < 2) return;
+    const minX = Math.min(...sel.map((o) => getObjectBounds(o).x));
+    saveHistory();
+    objects = objects.map((o) => {
+      if (!selectedIds.has(o.id)) return o;
+      const b = getObjectBounds(o);
+      const copy = { ...o };
+      translateObject(copy, minX - b.x, 0);
+      return copy;
+    });
+  }
+
+  function alignCenterH() {
+    const sel = objects.filter((o) => selectedIds.has(o.id));
+    if (sel.length < 2) return;
+    const bounds = sel.map((o) => getObjectBounds(o));
+    const groupLeft = Math.min(...bounds.map((b) => b.x));
+    const groupRight = Math.max(...bounds.map((b) => b.x + b.w));
+    const centerX = (groupLeft + groupRight) / 2;
+    saveHistory();
+    objects = objects.map((o) => {
+      if (!selectedIds.has(o.id)) return o;
+      const b = getObjectBounds(o);
+      const copy = { ...o };
+      translateObject(copy, centerX - (b.x + b.w / 2), 0);
+      return copy;
+    });
+  }
+
+  function alignRight() {
+    const sel = objects.filter((o) => selectedIds.has(o.id));
+    if (sel.length < 2) return;
+    const maxX = Math.max(
+      ...sel.map((o) => {
+        const b = getObjectBounds(o);
+        return b.x + b.w;
+      }),
+    );
+    saveHistory();
+    objects = objects.map((o) => {
+      if (!selectedIds.has(o.id)) return o;
+      const b = getObjectBounds(o);
+      const copy = { ...o };
+      translateObject(copy, maxX - (b.x + b.w), 0);
+      return copy;
+    });
+  }
+
+  function alignTop() {
+    const sel = objects.filter((o) => selectedIds.has(o.id));
+    if (sel.length < 2) return;
+    const minY = Math.min(...sel.map((o) => getObjectBounds(o).y));
+    saveHistory();
+    objects = objects.map((o) => {
+      if (!selectedIds.has(o.id)) return o;
+      const b = getObjectBounds(o);
+      const copy = { ...o };
+      translateObject(copy, 0, minY - b.y);
+      return copy;
+    });
+  }
+
+  function alignMiddleV() {
+    const sel = objects.filter((o) => selectedIds.has(o.id));
+    if (sel.length < 2) return;
+    const bounds = sel.map((o) => getObjectBounds(o));
+    const groupTop = Math.min(...bounds.map((b) => b.y));
+    const groupBottom = Math.max(...bounds.map((b) => b.y + b.h));
+    const centerY = (groupTop + groupBottom) / 2;
+    saveHistory();
+    objects = objects.map((o) => {
+      if (!selectedIds.has(o.id)) return o;
+      const b = getObjectBounds(o);
+      const copy = { ...o };
+      translateObject(copy, 0, centerY - (b.y + b.h / 2));
+      return copy;
+    });
+  }
+
+  function alignBottom() {
+    const sel = objects.filter((o) => selectedIds.has(o.id));
+    if (sel.length < 2) return;
+    const maxY = Math.max(
+      ...sel.map((o) => {
+        const b = getObjectBounds(o);
+        return b.y + b.h;
+      }),
+    );
+    saveHistory();
+    objects = objects.map((o) => {
+      if (!selectedIds.has(o.id)) return o;
+      const b = getObjectBounds(o);
+      const copy = { ...o };
+      translateObject(copy, 0, maxY - (b.y + b.h));
+      return copy;
+    });
+  }
+
+  function distributeH() {
+    const sel = objects.filter((o) => selectedIds.has(o.id));
+    if (sel.length < 3) return;
+    const sorted = [...sel].sort(
+      (a, b) => getObjectBounds(a).x - getObjectBounds(b).x,
+    );
+    const first = getObjectBounds(sorted[0]);
+    const last = getObjectBounds(sorted[sorted.length - 1]);
+    const totalObjW = sorted.reduce((acc, o) => acc + getObjectBounds(o).w, 0);
+    const gap = (last.x + last.w - first.x - totalObjW) / (sorted.length - 1);
+    saveHistory();
+    let cursor = first.x;
+    const offsets = new Map<string, number>();
+    for (const obj of sorted) {
+      const b = getObjectBounds(obj);
+      offsets.set(obj.id, cursor - b.x);
+      cursor += b.w + gap;
+    }
+    objects = objects.map((o) => {
+      if (!selectedIds.has(o.id)) return o;
+      const dx = offsets.get(o.id) ?? 0;
+      const copy = { ...o };
+      translateObject(copy, dx, 0);
+      return copy;
+    });
+  }
+
+  function distributeV() {
+    const sel = objects.filter((o) => selectedIds.has(o.id));
+    if (sel.length < 3) return;
+    const sorted = [...sel].sort(
+      (a, b) => getObjectBounds(a).y - getObjectBounds(b).y,
+    );
+    const first = getObjectBounds(sorted[0]);
+    const last = getObjectBounds(sorted[sorted.length - 1]);
+    const totalObjH = sorted.reduce((acc, o) => acc + getObjectBounds(o).h, 0);
+    const gap = (last.y + last.h - first.y - totalObjH) / (sorted.length - 1);
+    saveHistory();
+    let cursor = first.y;
+    const offsets = new Map<string, number>();
+    for (const obj of sorted) {
+      const b = getObjectBounds(obj);
+      offsets.set(obj.id, cursor - b.y);
+      cursor += b.h + gap;
+    }
+    objects = objects.map((o) => {
+      if (!selectedIds.has(o.id)) return o;
+      const dy = offsets.get(o.id) ?? 0;
+      const copy = { ...o };
+      translateObject(copy, 0, dy);
+      return copy;
+    });
+  }
+
   let mode = $state<InteractionMode>("select"); // Default to select mode
 
   // Drawing State
@@ -110,6 +292,33 @@
   let showGrid = $state(true);
   let snapToGrid = $state(false);
   const RULER_SIZE = 20;
+
+  // ── Paper / Canvas Sizes ────────────────────────────────────────────────────
+  // Sizes in pixels at 96 DPI (1 pt = 1px). For print output the export
+  // pipeline uses its own DPI setting independently.
+  const PAPER_SIZES: { key: string; label: string; w: number; h: number }[] = [
+    { key: "a4p", label: "A4 Portrait", w: 794, h: 1123 },
+    { key: "a4l", label: "A4 Landscape", w: 1123, h: 794 },
+    { key: "a3p", label: "A3 Portrait", w: 1123, h: 1587 },
+    { key: "a3l", label: "A3 Landscape", w: 1587, h: 1123 },
+    { key: "a0p", label: "A0 Poster (portrait)", w: 3179, h: 4494 },
+    { key: "letter", label: "US Letter", w: 816, h: 1056 },
+    { key: "nature1", label: "Nature 1-col (89mm)", w: 337, h: 252 },
+    { key: "nature2", label: "Nature 2-col (183mm)", w: 693, h: 520 },
+    { key: "cell", label: "Cell full page", w: 708, h: 960 },
+    { key: "pnas", label: "PNAS full page", w: 693, h: 997 },
+    { key: "custom", label: "Custom…", w: 800, h: 600 },
+  ];
+  let paperKey = $state("a4l");
+  let paperW = $derived(PAPER_SIZES.find((p) => p.key === paperKey)?.w ?? 800);
+  let paperH = $derived(PAPER_SIZES.find((p) => p.key === paperKey)?.h ?? 600);
+  let showLayoutPanel = $state(false);
+  // Custom paper size (only used when paperKey === 'custom')
+  let customPaperW = $state(800);
+  let customPaperH = $state(600);
+  // Resolved paper dimensions
+  let resolvedW = $derived(paperKey === "custom" ? customPaperW : paperW);
+  let resolvedH = $derived(paperKey === "custom" ? customPaperH : paperH);
 
   // Global Font Defaults
   let defaultFontFamily = $state("Arial");
@@ -135,6 +344,37 @@
     dpi: 300,
   });
   let isExporting = $state(false);
+
+  // Clipboard & Shortcuts
+  let clipboard: CanvasObject[] = $state([]);
+  let showShortcutsHelp = $state(false);
+  let showAboutDialog = $state(false);
+  let isPanToolActive = $state(false); // true when P key pan tool is locked on
+  let hasStarted = $state(false); // true once user takes any action
+
+  // Context Menu State
+  let contextMenu = $state<{
+    x: number;
+    y: number;
+    objectId: string | null;
+  } | null>(null);
+
+  function openContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    // Find object under cursor (if any)
+    const wx = (e.offsetX - offset.x) / zoom;
+    const wy = (e.offsetY - offset.y) / zoom;
+    const hitId = hitTest(wx, wy);
+    if (hitId && !selectedIds.has(hitId)) {
+      // Select the right-clicked object if not already in selection
+      selectedIds = new Set([hitId]);
+    }
+    contextMenu = { x: e.clientX, y: e.clientY, objectId: hitId };
+  }
+
+  function closeContextMenu() {
+    contextMenu = null;
+  }
 
   // Per-Tool Defaults
   interface ToolStyle {
@@ -209,7 +449,13 @@
 
   // Constants
   const MIN_ZOOM = 0.1;
-  const gridSize = 20;
+  const GRID_PRESETS = [5, 10, 20, 50, 100] as const;
+  let gridSize = $state(20);
+  let gridSizeCustom = $state(20); // used when 'custom' is selected
+  let gridSizeKey = $state<number | "custom">(20); // tracks picker value
+  $effect(() => {
+    gridSize = gridSizeKey === "custom" ? gridSizeCustom : gridSizeKey;
+  });
   const HIT_TOLERANCE = 5; // Distance in World Units
   const SNAP_TOLERANCE = 10; // Distance in World Units
   const MAX_ZOOM = 32.0;
@@ -331,6 +577,12 @@
         try {
           console.log("Setting up Tauri drag-drop listeners...");
           const u1 = await listen("tauri://drag-enter", () => {
+            if (
+              typeof window !== "undefined" &&
+              (window as any).__isLayersDragging
+            ) {
+              return; // Ignore internal drags from LayersPanel
+            }
             isDragOver = true;
           });
           unlisteners.push(u1);
@@ -370,8 +622,8 @@
     const containerWidth = window.innerWidth;
     const containerHeight = window.innerHeight;
 
-    offset.x = (containerWidth - width * zoom) / 2 + RULER_SIZE;
-    offset.y = (containerHeight - height * zoom) / 2 + RULER_SIZE;
+    offset.x = (containerWidth - resolvedW * zoom) / 2 + RULER_SIZE;
+    offset.y = (containerHeight - resolvedH * zoom) / 2 + RULER_SIZE;
   }
 
   function render() {
@@ -391,7 +643,7 @@
     ctx.fillStyle = "#ffffff";
     ctx.shadowColor = "rgba(0, 0, 0, 0.5)";
     ctx.shadowBlur = 20;
-    ctx.fillRect(0, 0, width, height);
+    ctx.fillRect(0, 0, resolvedW, resolvedH);
     ctx.shadowBlur = 0; // Reset shadow
 
     // Draw Grid (on top of paper)
@@ -401,6 +653,7 @@
 
     // Draw Objects
     for (const obj of objects) {
+      if (obj.hidden) continue;
       drawObject(ctx, obj, imageCache);
     }
 
@@ -433,82 +686,198 @@
         const id = Array.from(selectedIds)[0];
         const obj = objects.find((o) => o.id === id);
         if (obj) {
-          // Calculate center
-          let cx = obj.x + obj.width / 2;
-          let cy = obj.y + obj.height / 2;
-          if (
-            obj.type === "line" &&
-            obj.x2 !== undefined &&
-            obj.y2 !== undefined
-          ) {
-            cx = (obj.x + obj.x2) / 2;
-            cy = (obj.y + obj.y2) / 2;
-          }
+          if (cropModeId === obj.id && obj.type === "image") {
+            // Draw Interactive Crop UI
+            const img = imageCache.get(obj.src!);
+            if (img && img.complete) {
+              const nw = img.naturalWidth || obj.width;
+              const nh = img.naturalHeight || obj.height;
+              const cl = obj.cropLeft ?? 0;
+              const ct = obj.cropTop ?? 0;
+              const cr = obj.cropRight ?? 0;
+              const cb = obj.cropBottom ?? 0;
+              const sw = nw - cl - cr;
+              const sh = nh - ct - cb;
 
-          ctx.translate(cx, cy);
-          ctx.rotate(obj.rotation || 0);
-          ctx.translate(-cx, -cy);
+              if (sw > 0 && sh > 0) {
+                const scaleX = obj.width / sw;
+                const scaleY = obj.height / sh;
 
-          // Draw bounding box (local space)
-          let bx = obj.x,
-            by = obj.y,
-            bw = obj.width,
-            bh = obj.height;
-          if (
-            obj.type === "line" &&
-            obj.x2 !== undefined &&
-            obj.y2 !== undefined
-          ) {
-            // For line, bounding box is min/max
-            bx = Math.min(obj.x, obj.x2);
-            by = Math.min(obj.y, obj.y2);
-            bw = Math.abs(obj.x - obj.x2);
-            bh = Math.abs(obj.y - obj.y2);
-          }
-          ctx.strokeRect(bx, by, bw, bh);
+                const fullX = obj.x - cl * scaleX;
+                const fullY = obj.y - ct * scaleY;
+                const fullW = nw * scaleX;
+                const fullH = nh * scaleY;
 
-          // Draw Resize Handles (8)
-          const handleSize = 8 / zoom;
-          const hHalf = handleSize / 2;
+                ctx.save();
+                // Draw dimmed full image underneath so user sees what is being cropped
+                ctx.globalAlpha = 0.4;
+                ctx.drawImage(img, fullX, fullY, fullW, fullH);
+                ctx.globalAlpha = 1.0;
 
-          ctx.fillStyle = "white";
-          ctx.strokeStyle = "black";
+                // Draw dashed outline
+                ctx.strokeStyle = "#2196f3";
+                ctx.lineWidth = 1 / zoom;
+                ctx.setLineDash([5 / zoom, 5 / zoom]);
+                ctx.strokeRect(obj.x, obj.y, obj.width, obj.height);
+                ctx.setLineDash([]);
 
-          // Corners: NW, NE, SE, SW
-          const corners = [
-            { x: bx, y: by }, // NW
-            { x: bx + bw, y: by }, // NE
-            { x: bx + bw, y: by + bh }, // SE
-            { x: bx, y: by + bh }, // SW
-            // Sides: N, E, S, W
-            { x: bx + bw / 2, y: by }, // N
-            { x: bx + bw, y: by + bh / 2 }, // E
-            { x: bx + bw / 2, y: by + bh }, // S
-            { x: bx, y: by + bh / 2 }, // W
-          ];
+                // Draw solid corner/edge crop handles
+                ctx.fillStyle = "#2196f3";
+                const hLen = 16 / zoom;
+                const hThick = 4 / zoom;
+                const hMid = hThick / 2;
 
-          corners.forEach((p) => {
+                // NW
+                ctx.fillRect(obj.x - hMid, obj.y - hMid, hLen, hThick);
+                ctx.fillRect(obj.x - hMid, obj.y - hMid, hThick, hLen);
+                // NE
+                ctx.fillRect(
+                  obj.x + obj.width - hLen + hMid,
+                  obj.y - hMid,
+                  hLen,
+                  hThick,
+                );
+                ctx.fillRect(
+                  obj.x + obj.width - hMid,
+                  obj.y - hMid,
+                  hThick,
+                  hLen,
+                );
+                // SW
+                ctx.fillRect(
+                  obj.x - hMid,
+                  obj.y + obj.height - hMid,
+                  hLen,
+                  hThick,
+                );
+                ctx.fillRect(
+                  obj.x - hMid,
+                  obj.y + obj.height - hLen + hMid,
+                  hThick,
+                  hLen,
+                );
+                // SE
+                ctx.fillRect(
+                  obj.x + obj.width - hLen + hMid,
+                  obj.y + obj.height - hMid,
+                  hLen,
+                  hThick,
+                );
+                ctx.fillRect(
+                  obj.x + obj.width - hMid,
+                  obj.y + obj.height - hLen + hMid,
+                  hThick,
+                  hLen,
+                );
+
+                // N, E, S, W
+                ctx.fillRect(
+                  obj.x + obj.width / 2 - hLen / 2,
+                  obj.y - hMid,
+                  hLen,
+                  hThick,
+                );
+                ctx.fillRect(
+                  obj.x + obj.width - hMid,
+                  obj.y + obj.height / 2 - hLen / 2,
+                  hThick,
+                  hLen,
+                );
+                ctx.fillRect(
+                  obj.x + obj.width / 2 - hLen / 2,
+                  obj.y + obj.height - hMid,
+                  hLen,
+                  hThick,
+                );
+                ctx.fillRect(
+                  obj.x - hMid,
+                  obj.y + obj.height / 2 - hLen / 2,
+                  hThick,
+                  hLen,
+                );
+
+                ctx.restore();
+              }
+            }
+          } else {
+            // Standard Single Selection Overlay (Resize/Rotate)
+            // Calculate center
+            let cx = obj.x + obj.width / 2;
+            let cy = obj.y + obj.height / 2;
+            if (
+              obj.type === "line" &&
+              obj.x2 !== undefined &&
+              obj.y2 !== undefined
+            ) {
+              cx = (obj.x + obj.x2) / 2;
+              cy = (obj.y + obj.y2) / 2;
+            }
+
+            ctx.translate(cx, cy);
+            ctx.rotate(obj.rotation || 0);
+            ctx.translate(-cx, -cy);
+
+            // Draw bounding box (local space)
+            let bx = obj.x,
+              by = obj.y,
+              bw = obj.width,
+              bh = obj.height;
+            if (
+              obj.type === "line" &&
+              obj.x2 !== undefined &&
+              obj.y2 !== undefined
+            ) {
+              // For line, bounding box is min/max
+              bx = Math.min(obj.x, obj.x2);
+              by = Math.min(obj.y, obj.y2);
+              bw = Math.abs(obj.x - obj.x2);
+              bh = Math.abs(obj.y - obj.y2);
+            }
+            ctx.strokeRect(bx, by, bw, bh);
+
+            // Draw Resize Handles (8)
+            const handleSize = 8 / zoom;
+            const hHalf = handleSize / 2;
+
+            ctx.fillStyle = "white";
+            ctx.strokeStyle = "black";
+
+            // Corners: NW, NE, SE, SW
+            const corners = [
+              { x: bx, y: by }, // NW
+              { x: bx + bw, y: by }, // NE
+              { x: bx + bw, y: by + bh }, // SE
+              { x: bx, y: by + bh }, // SW
+              // Sides: N, E, S, W
+              { x: bx + bw / 2, y: by }, // N
+              { x: bx + bw, y: by + bh / 2 }, // E
+              { x: bx + bw / 2, y: by + bh }, // S
+              { x: bx, y: by + bh / 2 }, // W
+            ];
+
+            corners.forEach((p) => {
+              ctx.beginPath();
+              ctx.rect(p.x - hHalf, p.y - hHalf, handleSize, handleSize);
+              ctx.fill();
+              ctx.stroke();
+            });
+
+            // Draw Rotate Handle (Top)
+            const rotDist = 20 / zoom;
+            const rx = bx + bw / 2;
+            const ry = by - rotDist;
+
             ctx.beginPath();
-            ctx.rect(p.x - hHalf, p.y - hHalf, handleSize, handleSize);
+            ctx.moveTo(rx, by);
+            ctx.lineTo(rx, ry);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(rx, ry, handleSize / 1.5, 0, Math.PI * 2);
+            ctx.fillStyle = "white";
             ctx.fill();
             ctx.stroke();
-          });
-
-          // Draw Rotate Handle (Top)
-          const rotDist = 20 / zoom;
-          const rx = bx + bw / 2;
-          const ry = by - rotDist;
-
-          ctx.beginPath();
-          ctx.moveTo(rx, by);
-          ctx.lineTo(rx, ry);
-          ctx.stroke();
-
-          ctx.beginPath();
-          ctx.arc(rx, ry, handleSize / 1.5, 0, Math.PI * 2);
-          ctx.fillStyle = "white";
-          ctx.fill();
-          ctx.stroke();
+          }
         }
       } else {
         // Multi-selection: Axis-aligned bounding box of all
@@ -596,14 +965,14 @@
 
     context.beginPath();
     // Vertical lines
-    for (let x = 0; x <= width; x += gridSize) {
+    for (let x = 0; x <= resolvedW; x += gridSize) {
       context.moveTo(x, 0);
-      context.lineTo(x, height);
+      context.lineTo(x, resolvedH);
     }
     // Horizontal lines
-    for (let y = 0; y <= height; y += gridSize) {
+    for (let y = 0; y <= resolvedH; y += gridSize) {
       context.moveTo(0, y);
-      context.lineTo(width, y);
+      context.lineTo(resolvedW, y);
     }
     context.stroke();
   }
@@ -684,233 +1053,84 @@
     ctx.fillRect(0, 0, RULER_SIZE, RULER_SIZE);
   }
 
-  function groupSelected() {
-    if (selectedIds.size < 2) return; // Need at least 2 to group
-
-    const selectedObjects: CanvasObject[] = [];
-    const nonSelectedObjects: CanvasObject[] = [];
-    const newSelectedIds = new Set<string>();
-
-    // Separate objects
-    for (const obj of objects) {
-      if (selectedIds.has(obj.id)) {
-        selectedObjects.push(obj);
-      } else {
-        nonSelectedObjects.push(obj);
-      }
-    }
-
-    if (selectedObjects.length === 0) return;
-
-    // Calculate Bounding Box for the Group
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-
-    // Helper to expand bbox
-    const expand = (o: CanvasObject) => {
-      minX = Math.min(minX, o.x);
-      minY = Math.min(minY, o.y);
-      maxX = Math.max(maxX, o.x + o.width);
-      maxY = Math.max(maxY, o.y + o.height);
-      if (o.type === "line" && o.x2 !== undefined && o.y2 !== undefined) {
-        minX = Math.min(minX, o.x2);
-        minY = Math.min(minY, o.y2);
-        maxX = Math.max(maxX, o.x2);
-        maxY = Math.max(maxY, o.y2);
-      }
-    };
-
-    for (const obj of selectedObjects) {
-      expand(obj);
-    }
-
-    const groupObj: CanvasObject = {
-      id: crypto.randomUUID(),
-      type: "group",
-      x: minX,
-      y: minY,
-      width: maxX - minX,
-      height: maxY - minY,
-      children: selectedObjects,
-      fill: "transparent", // Groups don't have fill usually
-    };
-
-    // Replace objects
-    objects = [...nonSelectedObjects, groupObj];
-    selectedIds.clear();
-    selectedIds.add(groupObj.id);
-    selectedIds = new Set(selectedIds);
+  function reorderObjects(fromIndex: number, toIndex: number) {
+    console.log("reorderObjects called:", fromIndex, "->", toIndex);
+    if (
+      fromIndex < 0 ||
+      fromIndex >= objects.length ||
+      toIndex < 0 ||
+      toIndex >= objects.length
+    )
+      return;
+    const item = objects.splice(fromIndex, 1)[0];
+    objects.splice(toIndex, 0, item);
+    objects = [...objects]; // trigger reactivity
+    console.log(
+      "objects after reorder:",
+      objects.map((o) => o.id),
+    );
     saveHistory();
   }
 
-  function ungroupSelected() {
-    if (selectedIds.size === 0) return;
-
-    let changed = false;
-    let newObjects = [...objects];
-    const newSelectedIds = new Set<string>();
-
-    // We need to handle this carefully to preserve order if possible,
-    // or just append to end/replace in place.
-    // For simplicity: Iterate, if group is selected, replace with children.
-
-    const finalObjects: CanvasObject[] = [];
-
-    for (const obj of objects) {
-      if (selectedIds.has(obj.id) && obj.type === "group" && obj.children) {
-        // Ungroup this
-        finalObjects.push(...obj.children);
-        for (const child of obj.children) {
-          newSelectedIds.add(child.id);
-        }
-        changed = true;
+  function toggleSelection(id: string, shiftKey: boolean) {
+    if (shiftKey) {
+      if (selectedIds.has(id)) {
+        selectedIds.delete(id);
       } else {
-        // Keep
-        finalObjects.push(obj);
-        if (selectedIds.has(obj.id)) {
-          newSelectedIds.add(obj.id);
-        }
-      }
-    }
-
-    if (changed) {
-      objects = finalObjects;
-      selectedIds = newSelectedIds;
-      selectedIds = new Set(selectedIds);
-      saveHistory();
-    }
-  }
-
-  function alignSelected(
-    type: "left" | "center" | "right" | "top" | "middle" | "bottom",
-  ) {
-    if (selectedIds.size <= 1) return;
-
-    // Get bounding box of all selected objects
-    let minX = Infinity,
-      minY = Infinity;
-    let maxX = -Infinity,
-      maxY = -Infinity;
-
-    for (const obj of objects) {
-      if (selectedIds.has(obj.id)) {
-        minX = Math.min(minX, obj.x);
-        minY = Math.min(minY, obj.y);
-        maxX = Math.max(maxX, obj.x + obj.width);
-        maxY = Math.max(maxY, obj.y + obj.height);
-      }
-    }
-
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
-
-    // Apply alignment
-    for (const obj of objects) {
-      if (selectedIds.has(obj.id)) {
-        switch (type) {
-          case "left":
-            obj.x = minX;
-            break;
-          case "center":
-            obj.x = centerX - obj.width / 2;
-            break;
-          case "right":
-            obj.x = maxX - obj.width;
-            break;
-          case "top":
-            obj.y = minY;
-            break;
-          case "middle":
-            obj.y = centerY - obj.height / 2;
-            break;
-          case "bottom":
-            obj.y = maxY - obj.height;
-            break;
-        }
-
-        // Handle lines
-        if (
-          obj.type === "line" &&
-          obj.x2 !== undefined &&
-          obj.y2 !== undefined
-        ) {
-          const lineWidth = obj.x2 - obj.x;
-          const lineHeight = obj.y2 - obj.y;
-          obj.x2 = obj.x + lineWidth;
-          obj.y2 = obj.y + lineHeight;
-        }
-      }
-    }
-
-    saveHistory();
-  }
-
-  function distributeSelected(type: "horizontal" | "vertical") {
-    if (selectedIds.size <= 2) return;
-
-    const selectedObjects = objects.filter((obj) => selectedIds.has(obj.id));
-
-    if (type === "horizontal") {
-      // Sort by x position
-      selectedObjects.sort((a, b) => a.x - b.x);
-
-      const leftmost = selectedObjects[0].x;
-      const rightmost =
-        selectedObjects[selectedObjects.length - 1].x +
-        selectedObjects[selectedObjects.length - 1].width;
-      const totalGap = rightmost - leftmost;
-
-      // Calculate total width of objects
-      const totalWidth = selectedObjects.reduce(
-        (sum, obj) => sum + obj.width,
-        0,
-      );
-      const spacing = (totalGap - totalWidth) / (selectedObjects.length - 1);
-
-      let currentX = leftmost;
-      for (const obj of selectedObjects) {
-        obj.x = currentX;
-        currentX += obj.width + spacing;
-
-        // Handle lines
-        if (obj.type === "line" && obj.x2 !== undefined) {
-          const lineWidth = obj.x2 - obj.x;
-          obj.x2 = obj.x + lineWidth;
-        }
+        selectedIds.add(id);
       }
     } else {
-      // Sort by y position
-      selectedObjects.sort((a, b) => a.y - b.y);
-
-      const topmost = selectedObjects[0].y;
-      const bottommost =
-        selectedObjects[selectedObjects.length - 1].y +
-        selectedObjects[selectedObjects.length - 1].height;
-      const totalGap = bottommost - topmost;
-
-      // Calculate total height of objects
-      const totalHeight = selectedObjects.reduce(
-        (sum, obj) => sum + obj.height,
-        0,
-      );
-      const spacing = (totalGap - totalHeight) / (selectedObjects.length - 1);
-
-      let currentY = topmost;
-      for (const obj of selectedObjects) {
-        obj.y = currentY;
-        currentY += obj.height + spacing;
-
-        // Handle lines
-        if (obj.type === "line" && obj.y2 !== undefined) {
-          const lineHeight = obj.y2 - obj.y;
-          obj.y2 = obj.y + lineHeight;
-        }
+      if (!selectedIds.has(id)) {
+        selectedIds.clear();
+        selectedIds.add(id);
       }
     }
+    selectedIds = new Set(selectedIds);
+  }
 
+  // (alignSelected removed — alignment handled by alignLeft/Right/etc. from Issue #18)
+
+  // ── Z-Order functions ───────────────────────────────────────────────────
+  function bringToFront() {
+    if (selectedIds.size === 0) return;
     saveHistory();
+    const sel = objects.filter((o) => selectedIds.has(o.id));
+    const rest = objects.filter((o) => !selectedIds.has(o.id));
+    objects = [...rest, ...sel];
+  }
+
+  function sendToBack() {
+    if (selectedIds.size === 0) return;
+    saveHistory();
+    const sel = objects.filter((o) => selectedIds.has(o.id));
+    const rest = objects.filter((o) => !selectedIds.has(o.id));
+    objects = [...sel, ...rest];
+  }
+
+  function bringForward() {
+    if (selectedIds.size === 0) return;
+    saveHistory();
+    const arr = [...objects];
+    // Iterate from end to avoid double-moving
+    for (let i = arr.length - 2; i >= 0; i--) {
+      if (selectedIds.has(arr[i].id) && !selectedIds.has(arr[i + 1].id)) {
+        [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]];
+      }
+    }
+    objects = arr;
+  }
+
+  function sendBackward() {
+    if (selectedIds.size === 0) return;
+    saveHistory();
+    const arr = [...objects];
+    // Iterate from start to avoid double-moving
+    for (let i = 1; i < arr.length; i++) {
+      if (selectedIds.has(arr[i].id) && !selectedIds.has(arr[i - 1].id)) {
+        [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]];
+      }
+    }
+    objects = arr;
   }
 
   function applyLayoutTemplate(
@@ -1052,6 +1272,7 @@
       selectedIds.add(newImage.id);
       selectedIds = new Set(selectedIds);
       saveHistory();
+      hasStarted = true;
 
       // Reset input
       input.value = "";
@@ -1060,55 +1281,40 @@
 
   async function addImageToCanvas(path: string) {
     console.log("Adding image from path:", path);
-    // Try standard asset URL first
-    let assetUrl = convertFileSrc(path);
-    console.log("Converted Asset URL:", assetUrl);
-
-    // Fallback: If asset URL fails, read file as Blob
-    // This happens if the Asset Protocol is not configured or blocked
-    let useBlob = false;
-
-    // Load image to get dimensions
+    let assetUrl = path;
     const img = new Image();
 
     try {
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-        img.src = assetUrl;
-      });
-    } catch (e) {
-      console.warn("Standard asset URL failed, trying Blob fallback...", e);
-      try {
-        // Assuming `readFile` is imported from `@tauri-apps/plugin-fs`
-        // import { readFile } from '@tauri-apps/plugin-fs';
+      if (isTauri() && !path.startsWith("blob:")) {
+        console.log("Reading file bytes to avoid WKWebView tainted canvas...");
         const bytes = await readFile(path);
         const blob = new Blob([bytes]);
         assetUrl = URL.createObjectURL(blob);
-        img.src = assetUrl;
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
-        });
-        console.log("Blob fallback successful!");
-      } catch (err2) {
-        console.error("Blob fallback failed:", err2);
-        return; // Give up
       }
+
+      img.src = assetUrl;
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+      });
+    } catch (e) {
+      console.warn("Failed to load image:", e);
+      return;
     }
 
     const newImage: CanvasObject = {
       id: crypto.randomUUID(),
       type: "image",
-      x: (lastMousePos.x - offset.x) / zoom, // Place at mouse or center
+      x: (lastMousePos.x - offset.x) / zoom,
       y: (lastMousePos.y - offset.y) / zoom,
       width: img.naturalWidth,
       height: img.naturalHeight,
       src: assetUrl,
+      originalPath: path, // Save the path for restoring SFS projects later
       naturalWidth: img.naturalWidth,
       naturalHeight: img.naturalHeight,
       rotation: 0,
-      fill: "transparent", // Placeholder
+      fill: "transparent",
     };
 
     // Center on screen if mouse is far off?
@@ -1237,7 +1443,11 @@
     saveHistory();
   }
 
-  function updateObjectProperty(id: string, props: Partial<CanvasObject>) {
+  function updateObjectProperty(
+    id: string,
+    props: Partial<CanvasObject>,
+    save: boolean = true,
+  ) {
     const obj = objects.find((o) => o.id === id);
     if (!obj) return;
 
@@ -1245,7 +1455,9 @@
     // Determine bounds if geometry changed?
     // Usually simple assignment is enough for Svelte $state
 
-    saveHistory();
+    if (save) {
+      saveHistory();
+    }
   }
 
   function selectSimilar() {
@@ -1303,7 +1515,8 @@
     const obj = objects.find((o) => o.id === id);
     if (!obj) return null;
 
-    const handleSize = 8 / zoom;
+    let handleSize = 8 / zoom;
+    if (cropModeId === obj.id) handleSize = 16 / zoom; // Larger hit area for crop
     const hHit = handleSize; // Hit area
 
     // Transform mouse into object local space
@@ -1358,16 +1571,31 @@
 
   function hitTest(x: number, y: number): string | null {
     // Recursive helper to check a single object (or group)
-    // Returns true if hit.
-    const checkHit = (obj: CanvasObject): boolean => {
+    // Returns hit ID or null.
+    const checkHit = (
+      obj: CanvasObject,
+      insideActive: boolean,
+    ): string | null => {
+      if (obj.hidden || obj.locked) return null;
+
+      const isActive = insideActive || obj.id === activeGroupId;
+
       if (obj.type === "group" && obj.children) {
-        // Check children. If any child is hit, the group is hit.
-        for (const child of obj.children) {
-          if (checkHit(child)) return true;
+        // Check children in reverse order (top-most first)
+        for (let i = obj.children.length - 1; i >= 0; i--) {
+          if (obj.children[i].hidden || obj.children[i].locked) continue;
+          const hitId = checkHit(obj.children[i], isActive);
+          if (hitId) {
+            // If actively editing this group, return the child ID directly
+            if (isActive) return hitId;
+            // Otherwise, normal grouping behavior: return the group ID
+            return obj.id;
+          }
         }
-        return false;
+        return null;
       }
 
+      let isHit = false;
       if (obj.type === "line" && obj.x2 !== undefined && obj.y2 !== undefined) {
         // Line Hit Test
         const A = { x: obj.x, y: obj.y };
@@ -1375,31 +1603,32 @@
         const P = { x, y };
 
         const l2 = (B.x - A.x) ** 2 + (B.y - A.y) ** 2;
-        if (l2 === 0) return false;
+        if (l2 !== 0) {
+          let t = ((P.x - A.x) * (B.x - A.x) + (P.y - A.y) * (B.y - A.y)) / l2;
+          t = Math.max(0, Math.min(1, t));
 
-        let t = ((P.x - A.x) * (B.x - A.x) + (P.y - A.y) * (B.y - A.y)) / l2;
-        t = Math.max(0, Math.min(1, t));
-
-        const proj = { x: A.x + t * (B.x - A.x), y: A.y + t * (B.y - A.y) };
-        const dist = Math.sqrt((P.x - proj.x) ** 2 + (P.y - proj.y) ** 2);
-
-        return dist <= HIT_TOLERANCE;
+          const proj = { x: A.x + t * (B.x - A.x), y: A.y + t * (B.y - A.y) };
+          const dist = Math.sqrt((P.x - proj.x) ** 2 + (P.y - proj.y) ** 2);
+          isHit = dist <= HIT_TOLERANCE;
+        }
       } else {
         // Shape Hit Test
-        return (
+        isHit =
           x >= obj.x &&
           x <= obj.x + obj.width &&
           y >= obj.y &&
-          y <= obj.y + obj.height
-        );
+          y <= obj.y + obj.height;
       }
+
+      return isHit ? obj.id : null;
     };
 
     // Iterate in reverse to hit top-most object first
     for (let i = objects.length - 1; i >= 0; i--) {
-      const obj = objects[i];
-      if (checkHit(obj)) {
-        return obj.id;
+      if (objects[i].hidden || objects[i].locked) continue;
+      const hitId = checkHit(objects[i], false);
+      if (hitId) {
+        return hitId;
       }
     }
     return null;
@@ -1480,16 +1709,19 @@
   function handleMouseDown(event: MouseEvent) {
     const worldPos = screenToWorld(event.clientX, event.clientY);
 
-    // 1. Pan (Middle click or Space+Left)
-    if (event.button === 1 || (event.button === 0 && isSpacePressed)) {
+    // 1. Pan (Middle click, Space+Left, or Pan tool active)
+    if (
+      event.button === 1 ||
+      (event.button === 0 && (isSpacePressed || isPanToolActive))
+    ) {
       mode = "pan";
       isDragging = true;
       dragStart = { x: event.clientX, y: event.clientY };
       return;
     }
 
-    // 2. Select / Move (Left click, no Space)
-    if (event.button === 0 && !isSpacePressed) {
+    // 2. Select / Move (Left click, no pan active)
+    if (event.button === 0 && !isSpacePressed && !isPanToolActive) {
       if (mode === "draw_text") {
         textInput = {
           visible: true,
@@ -1632,6 +1864,11 @@
         }
 
         const hitId = hitTest(worldPos.x, worldPos.y);
+
+        if (cropModeId && hitId !== cropModeId) {
+          cropModeId = null;
+        }
+
         if (hitId) {
           // Clicked on object
           if (event.shiftKey) {
@@ -1689,68 +1926,632 @@
   let isSpacePressed = $state(false);
 
   function handleKeyDown(event: KeyboardEvent) {
-    if (event.code === "Space") {
+    // Ignore shortcuts when typing in inputs/textareas
+    if (
+      document.activeElement instanceof HTMLInputElement ||
+      document.activeElement instanceof HTMLTextAreaElement
+    ) {
+      return;
+    }
+
+    const ctrl = event.ctrlKey || event.metaKey;
+    const shift = event.shiftKey;
+    const key = event.key;
+    const code = event.code;
+
+    // ── Space (pan) ──────────────────────────────────────────────────────────
+    if (code === "Space") {
       isSpacePressed = true;
     }
 
-    // Toggle Grid: Ctrl + G
-    if ((event.ctrlKey || event.metaKey) && event.code === "KeyG") {
-      if (event.shiftKey) {
-        // Toggle Snap: Ctrl + Shift + G
-        snapToGrid = !snapToGrid;
-      } else {
-        // Toggle Grid only
-        showGrid = !showGrid;
+    // ── ? shortcut (requires Shift on most keyboards — check before !shift gate)
+    if (!ctrl && !event.altKey && !textInput.visible && key === "?") {
+      showShortcutsHelp = !showShortcutsHelp;
+      event.preventDefault();
+      return;
+    }
+
+    // ── Tool selection (no ctrl, no alt, no shift) ────────────────────────────
+    if (!ctrl && !shift && !event.altKey && !textInput.visible) {
+      switch (key) {
+        case "v":
+        case "V":
+          isSpacePressed = false;
+          isPanToolActive = false;
+          mode = "select";
+          event.preventDefault();
+          return;
+        case "r":
+        case "R":
+          isPanToolActive = false;
+          mode = "draw_rectangle";
+          event.preventDefault();
+          return;
+        case "e":
+        case "E":
+          isPanToolActive = false;
+          mode = "draw_ellipse";
+          event.preventDefault();
+          return;
+        case "l":
+        case "L":
+          isPanToolActive = false;
+          mode = "draw_line";
+          event.preventDefault();
+          return;
+        case "t":
+        case "T":
+          isPanToolActive = false;
+          mode = "draw_text";
+          event.preventDefault();
+          return;
+        case "p":
+        case "P":
+          isPanToolActive = !isPanToolActive;
+          isSpacePressed = false;
+          event.preventDefault();
+          return;
+        case "s":
+        case "S":
+          isPanToolActive = false;
+          mode = "draw_scalebar";
+          event.preventDefault();
+          return;
+        case "h":
+        case "H":
+          isPanToolActive = false;
+          mode = "draw_label";
+          event.preventDefault();
+          return;
+        // ? is handled above the !shift gate
+        case "Escape":
+          if (showShortcutsHelp) {
+            showShortcutsHelp = false;
+            return;
+          }
+          if (showExportDialog) {
+            showExportDialog = false;
+            return;
+          }
+          selectedIds = new Set();
+          isSpacePressed = false;
+          isPanToolActive = false;
+          mode = "select";
+          return;
       }
-      event.preventDefault();
     }
 
-    // Undo/Redo: Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y)
-    if ((event.ctrlKey || event.metaKey) && event.code === "KeyZ") {
-      if (event.shiftKey) {
-        redo();
-      } else {
-        undo();
+    // ── Escape with nothing else active ─────────────────────────────────────
+    if (key === "Escape" && !ctrl) {
+      if (showShortcutsHelp) {
+        showShortcutsHelp = false;
+        event.preventDefault();
+        return;
       }
-      event.preventDefault();
-    }
-    if ((event.ctrlKey || event.metaKey) && event.code === "KeyY") {
-      redo();
-      event.preventDefault();
-    }
-
-    // Group: Ctrl+G
-    // Ungroup: Ctrl+Shift+G
-    if ((event.ctrlKey || event.metaKey) && event.code === "KeyG") {
-      if (event.shiftKey) {
-        ungroupSelected();
-      } else {
-        groupSelected();
+      if (showExportDialog) {
+        showExportDialog = false;
+        event.preventDefault();
+        return;
       }
-      event.preventDefault();
     }
 
-    // Delete
-    if (event.code === "Backspace" || event.code === "Delete") {
-      if (textInput.visible) return; // Don't delete if editing text
+    // ── Ctrl shortcuts ───────────────────────────────────────────────────────
+    if (ctrl) {
+      switch (key.toLowerCase()) {
+        // New canvas
+        case "n":
+          newCanvas();
+          event.preventDefault();
+          return;
+        // Open / import image
+        case "o":
+          importImage();
+          event.preventDefault();
+          return;
+        // Save (Ctrl+S) / Export dialog (Ctrl+Shift+E)
+        case "s":
+          shift ? (showExportDialog = true) : saveProject();
+          event.preventDefault();
+          return;
+        // Ctrl+Shift+E → Export
+        case "e":
+          if (shift) {
+            showExportDialog = true;
+            event.preventDefault();
+          }
+          return;
+        // Undo / Redo
+        case "z":
+          shift ? redo() : undo();
+          event.preventDefault();
+          return;
+        case "y":
+          redo();
+          event.preventDefault();
+          return;
+        // Clipboard
+        case "c":
+          copySelected();
+          event.preventDefault();
+          return;
+        case "x":
+          cutSelected();
+          event.preventDefault();
+          return;
+        case "v":
+          event.preventDefault();
+          // Try system clipboard first (images/text from OS)
+          (async () => {
+            try {
+              if (navigator.clipboard && navigator.clipboard.read) {
+                const clipItems = await navigator.clipboard.read();
+                let handled = false;
+                for (const ci of clipItems) {
+                  // Image paste
+                  const imageType = ci.types.find((t) =>
+                    t.startsWith("image/"),
+                  );
+                  if (imageType) {
+                    const blob = await ci.getType(imageType);
+                    const objectUrl = URL.createObjectURL(blob);
+                    const img = new Image();
+                    img.src = objectUrl;
+                    await new Promise((r) => {
+                      img.onload = r;
+                      img.onerror = r;
+                    });
+                    const vx = (canvasWidth / 2 - offset.x) / zoom;
+                    const vy = (canvasHeight / 2 - offset.y) / zoom;
+                    const newImage: CanvasObject = {
+                      id: crypto.randomUUID(),
+                      type: "image",
+                      x: vx - img.naturalWidth / 2,
+                      y: vy - img.naturalHeight / 2,
+                      width: img.naturalWidth,
+                      height: img.naturalHeight,
+                      src: objectUrl,
+                      naturalWidth: img.naturalWidth,
+                      naturalHeight: img.naturalHeight,
+                      rotation: 0,
+                      fill: "transparent",
+                    };
+                    objects = [...objects, newImage];
+                    selectedIds = new Set([newImage.id]);
+                    saveHistory();
+                    hasStarted = true;
+                    handled = true;
+                    break;
+                  }
+                }
+                if (!handled) {
+                  // Text paste
+                  for (const ci of clipItems) {
+                    if (ci.types.includes("text/plain")) {
+                      const txt = await (await ci.getType("text/plain")).text();
+                      if (txt.trim()) {
+                        const vx = (canvasWidth / 2 - offset.x) / zoom;
+                        const vy = (canvasHeight / 2 - offset.y) / zoom;
+                        const newText: CanvasObject = {
+                          id: crypto.randomUUID(),
+                          type: "text",
+                          x: vx - 50,
+                          y: vy - 10,
+                          width: 200,
+                          height: 20,
+                          text: txt,
+                          fontSize: defaultFontSize,
+                          fontFamily: defaultFontFamily,
+                          fontWeight: defaultFontWeight,
+                          fontStyle: defaultFontStyle,
+                          fill: defaultFillColor,
+                          rotation: 0,
+                        };
+                        objects = [...objects, newText];
+                        selectedIds = new Set([newText.id]);
+                        saveHistory();
+                        hasStarted = true;
+                        handled = true;
+                        break;
+                      }
+                    }
+                  }
+                }
+                // If nothing from system clipboard, fall back to internal paste
+                if (!handled) pasteClipboard();
+              } else {
+                pasteClipboard();
+              }
+            } catch {
+              // Permission denied or API unavailable → internal paste
+              pasteClipboard();
+            }
+          })();
+          return;
+        case "d":
+          duplicateSelected();
+          event.preventDefault();
+          return;
+        case "g":
+          if (shift) {
+            ungroupSelected();
+          } else {
+            groupSelected();
+          }
+          event.preventDefault();
+          return;
+        // Grid / Snap toggles
+        case "'":
+          if (shift) {
+            // Ctrl+Shift+' → toggle snap
+            snapToGrid = !snapToGrid;
+          } else {
+            // Ctrl+' → toggle grid
+            showGrid = !showGrid;
+          }
+          event.preventDefault();
+          return;
+        // Shortcuts help
+        case "/":
+          showShortcutsHelp = !showShortcutsHelp;
+          event.preventDefault();
+          return;
+      }
+    }
 
+    // ── Arrow key nudge ──────────────────────────────────────────────────────
+    if (selectedIds.size > 0 && !textInput.visible) {
+      const step = shift ? 10 : 1;
+      switch (code) {
+        case "ArrowLeft":
+          nudgeSelected(-step, 0);
+          event.preventDefault();
+          break;
+        case "ArrowRight":
+          nudgeSelected(step, 0);
+          event.preventDefault();
+          break;
+        case "ArrowUp":
+          nudgeSelected(0, -step);
+          event.preventDefault();
+          break;
+        case "ArrowDown":
+          nudgeSelected(0, step);
+          event.preventDefault();
+          break;
+      }
+    }
+
+    // ── Z-Order shortcuts ────────────────────────────────────────────────────
+    if (selectedIds.size > 0 && !textInput.visible && shift) {
+      if (key === "]") {
+        event.altKey ? bringToFront() : bringForward();
+        event.preventDefault();
+        return;
+      }
+      if (key === "[") {
+        event.altKey ? sendToBack() : sendBackward();
+        event.preventDefault();
+        return;
+      }
+    }
+
+    // ── Alignment shortcuts (Shift+Alt+key) ──────────────────────────────────
+    if (shift && event.altKey && selectedIds.size >= 2 && !textInput.visible) {
+      switch (key.toUpperCase()) {
+        case "L":
+          alignLeft();
+          event.preventDefault();
+          return;
+        case "C":
+          alignCenterH();
+          event.preventDefault();
+          return;
+        case "R":
+          alignRight();
+          event.preventDefault();
+          return;
+        case "T":
+          alignTop();
+          event.preventDefault();
+          return;
+        case "M":
+          alignMiddleV();
+          event.preventDefault();
+          return;
+        case "B":
+          alignBottom();
+          event.preventDefault();
+          return;
+        case "H":
+          distributeH();
+          event.preventDefault();
+          return;
+        case "V":
+          distributeV();
+          event.preventDefault();
+          return;
+      }
+    }
+
+    // ── Delete / Backspace ───────────────────────────────────────────────────
+    if (code === "Backspace" || code === "Delete") {
+      if (textInput.visible) return;
       if (selectedIds.size > 0) {
-        saveHistory(); // Save state before deletion
-
-        // Filter out selected objects
+        saveHistory();
         objects = objects.filter((obj) => !selectedIds.has(obj.id));
-
-        selectedIds.clear();
-        selectedIds = new Set(selectedIds); // Trigger reactivity
-
+        selectedIds = new Set();
         event.preventDefault();
       }
     }
   }
 
+  // ── Selection helpers ──────────────────────────────────────────────────────
+  function selectAll() {
+    selectedIds = new Set(objects.map((o) => o.id));
+  }
+
+  function selectAllSimilar() {
+    if (selectedIds.size === 0) return;
+    const firstId = Array.from(selectedIds)[0];
+    const first = objects.find((o) => o.id === firstId);
+    if (!first) return;
+    selectedIds = new Set(
+      objects.filter((o) => o.type === first.type).map((o) => o.id),
+    );
+  }
+
+  // ── Clipboard helpers ───────────────────────────────────────────────────────
+  function copySelected() {
+    if (selectedIds.size === 0) return;
+    clipboard = objects
+      .filter((o) => selectedIds.has(o.id))
+      .map((o) => JSON.parse(JSON.stringify(o)));
+  }
+
+  function cutSelected() {
+    if (selectedIds.size === 0) return;
+    copySelected();
+    saveHistory();
+    objects = objects.filter((o) => !selectedIds.has(o.id));
+    selectedIds = new Set();
+  }
+
+  function pasteClipboard() {
+    if (clipboard.length === 0) return;
+    saveHistory();
+    const pasteOffset = 15;
+    const newObjs: CanvasObject[] = clipboard.map((o) => {
+      const copy = JSON.parse(JSON.stringify(o)) as CanvasObject;
+      copy.id = crypto.randomUUID();
+      copy.x = o.x + pasteOffset;
+      copy.y = o.y + pasteOffset;
+      // Preserve line endpoint offset exactly (don't change angle/length)
+      if (o.type === "line" && o.x2 !== undefined && o.y2 !== undefined) {
+        copy.x2 = o.x2 + pasteOffset;
+        copy.y2 = o.y2 + pasteOffset;
+      }
+      return copy;
+    });
+    objects = [...objects, ...newObjs];
+    selectedIds = new Set(newObjs.map((o) => o.id));
+  }
+
+  // ── Interactive Crop Mode ────────────────────────────────────────────────────
+  /** When non-null, we are in crop mode for this image object id */
+  let cropModeId = $state<string | null>(null);
+  /** Which crop handle is being dragged: 'l'|'t'|'r'|'b' or null */
+  let activeCropHandle = $state<string | null>(null);
+
+  function enterCropMode(objId: string) {
+    cropModeId = objId;
+    selectedIds = new Set([objId]);
+  }
+  function exitCropMode() {
+    cropModeId = null;
+    activeCropHandle = null;
+  }
+
+  // ── System Clipboard Paste (Ctrl+V from OS) ─────────────────────────────────
+  async function handleSystemPaste(e: ClipboardEvent) {
+    // Skip if a text field is focused (let the browser handle it normally)
+    const active = document.activeElement;
+    if (
+      active &&
+      (active.tagName === "INPUT" ||
+        active.tagName === "TEXTAREA" ||
+        (active as HTMLElement).isContentEditable)
+    ) {
+      return;
+    }
+
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        const objectUrl = URL.createObjectURL(file);
+        const img = new Image();
+        img.src = objectUrl;
+        await new Promise((r) => (img.onload = r));
+
+        // Place at center of current viewport
+        const vx = (canvasWidth / 2 - offset.x) / zoom;
+        const vy = (canvasHeight / 2 - offset.y) / zoom;
+        const newImage: CanvasObject = {
+          id: crypto.randomUUID(),
+          type: "image",
+          x: vx - img.naturalWidth / 2,
+          y: vy - img.naturalHeight / 2,
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+          src: objectUrl,
+          naturalWidth: img.naturalWidth,
+          naturalHeight: img.naturalHeight,
+          rotation: 0,
+          fill: "transparent",
+        };
+        objects = [...objects, newImage];
+        selectedIds = new Set([newImage.id]);
+        saveHistory();
+        hasStarted = true;
+        return; // Only paste the first image found
+      }
+    }
+
+    // If no image found, try pasting as a text object
+    for (const item of Array.from(items)) {
+      if (item.type === "text/plain") {
+        item.getAsString((text) => {
+          if (!text.trim()) return;
+          const vx = (canvasWidth / 2 - offset.x) / zoom;
+          const vy = (canvasHeight / 2 - offset.y) / zoom;
+          const newText: CanvasObject = {
+            id: crypto.randomUUID(),
+            type: "text",
+            x: vx - 50,
+            y: vy - 10,
+            width: 200,
+            height: 20,
+            text,
+            fontSize: defaultFontSize,
+            fontFamily: defaultFontFamily,
+            fontWeight: defaultFontWeight,
+            fontStyle: defaultFontStyle,
+            fill: defaultFillColor,
+            rotation: 0,
+          };
+          objects = [...objects, newText];
+          selectedIds = new Set([newText.id]);
+          saveHistory();
+          hasStarted = true;
+        });
+        return;
+      }
+    }
+  }
+
+  function duplicateSelected() {
+    if (selectedIds.size === 0) return;
+    copySelected();
+    pasteClipboard();
+  }
+
+  // ── Group / Ungroup ──────────────────────────────────────────────────────────
+  /** ID of the group we've double-clicked into (for group-scope selection) */
+  let activeGroupId = $state<string | null>(null);
+
+  function groupSelected() {
+    const ids = new Set(selectedIds);
+    if (ids.size < 2) return;
+    const selected = objects.filter((o) => ids.has(o.id));
+    if (selected.length < 2) return;
+
+    // Compute bounding box of all selected objects
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    for (const o of selected) {
+      minX = Math.min(minX, o.x);
+      minY = Math.min(minY, o.y);
+      maxX = Math.max(maxX, o.x + (o.width || 0));
+      maxY = Math.max(maxY, o.y + (o.height || 0));
+    }
+
+    const group: CanvasObject = {
+      id: crypto.randomUUID(),
+      type: "group",
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+      fill: "transparent",
+      children: selected,
+    };
+
+    saveHistory();
+    // Remove selected from flat list, add group
+    objects = [...objects.filter((o) => !ids.has(o.id)), group];
+    selectedIds = new Set([group.id]);
+  }
+
+  function ungroupSelected() {
+    const ids = new Set(selectedIds);
+    if (ids.size === 0) return;
+    const groups = objects.filter((o) => ids.has(o.id) && o.type === "group");
+    if (groups.length === 0) return;
+    saveHistory();
+    // Flatten recursively
+    const newIds = new Set<string>();
+    let updated = [...objects];
+    for (const grp of groups) {
+      const children = grp.children ?? [];
+      const idx = updated.indexOf(grp);
+      updated.splice(idx, 1, ...children);
+      children.forEach((c) => newIds.add(c.id));
+    }
+    objects = updated;
+    selectedIds = newIds;
+    activeGroupId = null;
+  }
+
+  // ── Nudge helpers ───────────────────────────────────────────────────────────
+  function nudgeSelected(dx: number, dy: number) {
+    if (selectedIds.size === 0) return;
+    saveHistory();
+    objects = objects.map((o) => {
+      if (!selectedIds.has(o.id)) return o;
+      const updated = { ...o, x: o.x + dx, y: o.y + dy };
+      // Also move line endpoint if applicable
+      if (o.type === "line" && o.x2 !== undefined && o.y2 !== undefined) {
+        updated.x2 = o.x2 + dx;
+        updated.y2 = o.y2 + dy;
+      }
+      return updated;
+    });
+  }
+
+  // ── Canvas state ─────────────────────────────────────────────────────────────
+  function newCanvas() {
+    if (objects.length === 0) return;
+    const confirmed = confirm("Clear the canvas? This cannot be undone.");
+    if (!confirmed) return;
+    objects = [];
+    selectedIds = new Set();
+    history = [];
+    historyIndex = -1;
+  }
+
   function handleKeyUp(event: KeyboardEvent) {
     if (event.code === "Space") {
       isSpacePressed = false;
+    }
+  }
+
+  function handleDoubleClick(e: MouseEvent) {
+    if (mode !== "select") return;
+
+    // Check what we double-clicked
+    const worldPos = screenToWorld(e.clientX, e.clientY);
+
+    // Hit test ignoring group scope to allow entering groups, or just regular hit test
+    // Actually our hit test currently returns the top-level object
+    // For now, let's just see what is currently selected (since single click selected it first)
+    if (selectedIds.size === 1) {
+      const id = Array.from(selectedIds)[0];
+      const obj = objects.find((o) => o.id === id);
+      if (obj) {
+        if (obj.type === "image") {
+          enterCropMode(obj.id);
+        } else if (obj.type === "group") {
+          // Enter group scope
+          activeGroupId = obj.id;
+          selectedIds.clear(); // Deselect the group itself, ready to select children
+        }
+      }
     }
   }
 
@@ -1802,8 +2603,9 @@
       const worldPos = screenToWorld(e.clientX, e.clientY); // Added this line to define worldPos
 
       if (mode === "pan") {
-        offset.x += e.clientX - lastMousePos.x;
-        offset.y += e.clientY - lastMousePos.y;
+        offset.x += e.clientX - dragStart.x;
+        offset.y += e.clientY - dragStart.y;
+        dragStart = { x: e.clientX, y: e.clientY };
       } else if (mode === "move") {
         activeGuides = [];
 
@@ -1979,85 +2781,171 @@
           obj.rotation = newRotation;
         }
       } else if (mode === "resize" && activeHandle && initialState) {
-        // Resize Logic
+        // Resize / Crop Logic
         const obj = objects.find((o) => o.id === initialState!.id);
         if (obj) {
-          // We need to calculate new bounds based on handle movement
-          // Complex with rotation!
-          // Simplification: valid only for non-rotated objects OR
-          // rotate mouse delta into local space
+          if (cropModeId === obj.id && obj.type === "image") {
+            // -- Crop Dragging Logic --
+            const img = imageCache.get(obj.src!);
+            if (!img) return;
+            const nw = img.naturalWidth || obj.width;
+            const nh = img.naturalHeight || obj.height;
+            const cl = initialState!.cropLeft ?? 0;
+            const ct = initialState!.cropTop ?? 0;
+            const cr = initialState!.cropRight ?? 0;
+            const cb = initialState!.cropBottom ?? 0;
+            const sw = nw - cl - cr;
+            const sh = nh - ct - cb;
+            if (sw <= 0 || sh <= 0) return;
 
-          const angle = -(initialState.rotation || 0); // Un-rotate
+            const scaleX = initialState!.width / sw;
+            const scaleY = initialState!.height / sh;
 
-          // Delta from DRAG START (not frame-to-frame) to avoid drift
-          const totalDx = (e.clientX - dragStart.x) / zoom;
-          const totalDy = (e.clientY - dragStart.y) / zoom;
+            // Raw movement
+            const totalDx = (e.clientX - dragStart.x) / zoom;
+            const totalDy = (e.clientY - dragStart.y) / zoom;
 
-          // Rotate delta into object local space
-          const rdx = totalDx * Math.cos(angle) - totalDy * Math.sin(angle);
-          const rdy = totalDx * Math.sin(angle) + totalDy * Math.cos(angle);
+            // We must update the crop inset amounts AND adjusting obj.x/y/width/height
+            // to keep the anchor pinned where we aren't dragging.
+            let newCL = cl;
+            let newCT = ct;
+            let newCR = cr;
+            let newCB = cb;
 
-          let newX = initialState.x;
-          let newY = initialState.y;
-          let newW = initialState.width;
-          let newH = initialState.height;
+            // Convert pixels moved back into natural dimensions
+            const pX = totalDx / scaleX;
+            const pY = totalDy / scaleY;
 
-          // Apply resizing based on handle
-          if (activeHandle.includes("w")) {
-            newW = initialState.width - rdx;
-            newX = initialState.x + rdx;
-          }
-          if (activeHandle.includes("e")) {
-            newW = initialState.width + rdx;
-          }
-          if (activeHandle.includes("n")) {
-            newH = initialState.height - rdy;
-            newY = initialState.y + rdy;
-          }
-          if (activeHandle.includes("s")) {
-            newH = initialState.height + rdy;
-          }
-
-          // Aspect ratio constraint (Shift)
-          if (e.shiftKey) {
-            // Keep ratio
-            const ratio = initialState.width / initialState.height;
-            if (activeHandle.includes("w") || activeHandle.includes("e")) {
-              // Width controls height
-              // TODO: Simplified aspect ratio logic
-            }
-          }
-
-          // Apply values, prevent negative size
-          if (newW < 1) {
-            newW = 1;
             if (activeHandle.includes("w"))
-              newX = initialState.x + initialState.width - 1;
-          }
-          if (newH < 1) {
-            newH = 1;
+              newCL = Math.max(0, Math.min(nw - cr - 10, cl + pX));
+            if (activeHandle.includes("e"))
+              newCR = Math.max(0, Math.min(nw - cl - 10, cr - pX));
             if (activeHandle.includes("n"))
-              newY = initialState.y + initialState.height - 1;
-          }
+              newCT = Math.max(0, Math.min(nh - cb - 10, ct + pY));
+            if (activeHandle.includes("s"))
+              newCB = Math.max(0, Math.min(nh - ct - 10, cb - pY));
 
-          obj.x = newX;
-          obj.y = newY;
-          obj.width = newW;
-          obj.height = newH;
+            // Compute new display size and position
+            const newSW = nw - newCL - newCR;
+            const newSH = nh - newCT - newCB;
 
-          if (obj.type === "line") {
-            // Line resizing is different, usually endpoint moving
-            // For now, treat line as box resizing which scales the line
-            // Or disable line resizing handles and use endpoint handles?
-            // Let's rely on line endpoint handles (which I should implement separately or integrate here)
-            // For now, just scaling bounds
+            obj.cropLeft = newCL;
+            obj.cropTop = newCT;
+            obj.cropRight = newCR;
+            obj.cropBottom = newCB;
+            obj.width = newSW * scaleX;
+            obj.height = newSH * scaleY;
+
+            if (activeHandle.includes("w"))
+              obj.x =
+                initialState.x +
+                (newCL - (initialState.cropLeft || 0)) * scaleX;
+            if (activeHandle.includes("n"))
+              obj.y =
+                initialState.y + (newCT - (initialState.cropTop || 0)) * scaleY;
+          } else {
+            // -- Standard Resize Logic --
+            const angle = -(initialState.rotation || 0); // Un-rotate
+
+            // Delta from DRAG START (not frame-to-frame) to avoid drift
+            const totalDx = (e.clientX - dragStart.x) / zoom;
+            const totalDy = (e.clientY - dragStart.y) / zoom;
+
+            // Rotate delta into object local space
+            const rdx = totalDx * Math.cos(angle) - totalDy * Math.sin(angle);
+            const rdy = totalDx * Math.sin(angle) + totalDy * Math.cos(angle);
+
+            let newX = initialState.x;
+            let newY = initialState.y;
+            let newW = initialState.width;
+            let newH = initialState.height;
+
+            // Apply resizing based on handle
+            if (activeHandle.includes("w")) {
+              newW = initialState.width - rdx;
+              newX = initialState.x + rdx;
+            }
+            if (activeHandle.includes("e")) {
+              newW = initialState.width + rdx;
+            }
+            if (activeHandle.includes("n")) {
+              newH = initialState.height - rdy;
+              newY = initialState.y + rdy;
+            }
+            if (activeHandle.includes("s")) {
+              newH = initialState.height + rdy;
+            }
+
+            // Aspect ratio constraint (Shift)
             if (
-              initialState.x2 !== undefined &&
-              initialState.y2 !== undefined
+              e.shiftKey &&
+              initialState.width > 0 &&
+              initialState.height > 0
             ) {
-              // Scale line points relative to new box?
-              // Complicated.
-              // Fallback: If line, do nothing or simple logic.
+              const ratio = initialState.width / initialState.height;
+              const isHoriz =
+                activeHandle.includes("e") || activeHandle.includes("w");
+              const isVert =
+                activeHandle.includes("n") || activeHandle.includes("s");
+              const isBoth = isHoriz && isVert; // corner handle
+
+              if (isBoth) {
+                // Corner drag: use the larger delta to drive both axes
+                if (
+                  Math.abs(newW - initialState.width) >=
+                  Math.abs(newH - initialState.height) * ratio
+                ) {
+                  // Width is driving
+                  newH = newW / ratio;
+                  if (activeHandle.includes("n")) {
+                    newY = initialState.y + initialState.height - newH;
+                  }
+                } else {
+                  // Height is driving
+                  newW = newH * ratio;
+                  if (activeHandle.includes("w")) {
+                    newX = initialState.x + initialState.width - newW;
+                  }
+                }
+              } else if (isHoriz) {
+                // Edge handle — width drives height
+                newH = newW / ratio;
+              } else if (isVert) {
+                // Edge handle — height drives width
+                newW = newH * ratio;
+              }
+            }
+
+            // Apply values, prevent negative size
+            if (newW < 1) {
+              newW = 1;
+              if (activeHandle.includes("w"))
+                newX = initialState.x + initialState.width - 1;
+            }
+            if (newH < 1) {
+              newH = 1;
+              if (activeHandle.includes("n"))
+                newY = initialState.y + initialState.height - 1;
+            }
+
+            obj.x = newX;
+            obj.y = newY;
+            obj.width = newW;
+            obj.height = newH;
+
+            if (obj.type === "line") {
+              // Line resizing is different, usually endpoint moving
+              // For now, treat line as box resizing which scales the line
+              // Or disable line resizing handles and use endpoint handles?
+              // Let's rely on line endpoint handles (which I should implement separately or integrate here)
+              // For now, just scaling bounds
+              if (
+                initialState.x2 !== undefined &&
+                initialState.y2 !== undefined
+              ) {
+                // Scale line points relative to new box?
+                // Complicated.
+              }
             }
           }
         }
@@ -2184,30 +3072,77 @@
       objects = [];
       selectedIds.clear();
       saveHistory();
+      hasStarted = false;
     }
   }
 
-  function saveProject() {
+  function handleWelcomeNew() {
+    hasStarted = true;
+  }
+
+  function handleWelcomeOpen() {
+    hasStarted = true;
+    fileInput?.click();
+  }
+
+  function handleWelcomeImport() {
+    hasStarted = true;
+    importImage();
+  }
+
+  async function saveProject() {
     const data = JSON.stringify(objects, null, 2);
-    const blob = new Blob([data], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "scifigura_project.json";
-    a.click();
-    URL.revokeObjectURL(url);
+    if (isTauri()) {
+      const path = await save({
+        filters: [{ name: "SciFigura Project", extensions: ["json"] }],
+        defaultPath: "my_figure.json",
+      });
+      if (path) {
+        await writeFile(path, new TextEncoder().encode(data));
+      }
+    } else {
+      // Web fallback
+      const blob = new Blob([data], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "scifigura_project.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   }
 
   function onFileSelect(e: Event) {
     const file = (e.target as HTMLInputElement).files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const json = e.target?.result as string;
-        objects = JSON.parse(json);
+        const parsedObjects = JSON.parse(json) as CanvasObject[];
+
+        // Hydrate images to avoid cross-origin WKWebView filtering issues
+        if (isTauri()) {
+          for (const obj of parsedObjects) {
+            if (obj.type === "image" && obj.originalPath) {
+              try {
+                const bytes = await readFile(obj.originalPath);
+                const blob = new Blob([bytes]);
+                obj.src = URL.createObjectURL(blob);
+              } catch (err) {
+                console.error(
+                  "Failed to restore image from " + obj.originalPath,
+                  err,
+                );
+              }
+            }
+          }
+        }
+
+        objects = parsedObjects;
         selectedIds.clear();
         saveHistory();
+        hasStarted = true;
       } catch (err) {
         alert("Failed to load project");
       }
@@ -2267,6 +3202,8 @@
 <svelte:window
   onkeydown={handleKeyDown}
   onkeyup={handleKeyUp}
+  onpaste={handleSystemPaste}
+  ondblclick={handleDoubleClick}
   onresize={() => {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -2277,7 +3214,7 @@
 <!-- Layout Container -->
 <div class="app-layout">
   <!-- Left Sidebar: Toolbox -->
-  <Toolbox {mode} {setMode} {importImage} />
+  <Toolbox {mode} {setMode} {importImage} {isPanToolActive} />
 
   <input
     type="file"
@@ -2301,20 +3238,500 @@
     <div class="top-bar">
       <!-- File Operations -->
       <div class="menu-group">
-        <button onclick={newProject} title="New Project (Ctrl+N)">New</button>
-        <button onclick={() => fileInput.click()} title="Open Project (Ctrl+O)"
-          >Open</button
+        <button
+          onclick={newProject}
+          title="New Project (Ctrl+N)"
+          class="icon-text-btn"
         >
-        <button onclick={saveProject} title="Save Project (Ctrl+S)">Save</button
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            ><path
+              d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+            /><polyline points="14 2 14 8 20 8" /></svg
+          >
+          New
+        </button>
+        <button
+          onclick={() => fileInput.click()}
+          title="Open Project (Ctrl+O)"
+          class="icon-text-btn"
         >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            ><path
+              d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+            /></svg
+          >
+          Open
+        </button>
+        <button
+          onclick={saveProject}
+          title="Save Project (Ctrl+S)"
+          class="icon-text-btn"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            ><path
+              d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"
+            /><polyline points="17 21 17 13 7 13 7 21" /><polyline
+              points="7 3 7 8 15 8"
+            /></svg
+          >
+          Save
+        </button>
       </div>
 
       <div class="divider-v"></div>
 
+      <!-- Edit Operations -->
       <div class="menu-group">
-        <button onclick={() => (showExportDialog = true)} title="Export Figure"
-          >Export...</button
+        <button
+          onclick={undo}
+          title="Undo (Ctrl+Z)"
+          class="icon-btn"
+          aria-label="Undo"
         >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            ><polyline points="9 14 4 9 9 4" /><path
+              d="M20 20v-7a4 4 0 0 0-4-4H4"
+            /></svg
+          >
+        </button>
+        <button
+          onclick={redo}
+          title="Redo (Ctrl+Shift+Z)"
+          class="icon-btn"
+          aria-label="Redo"
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            ><polyline points="15 14 20 9 15 4" /><path
+              d="M4 20v-7a4 4 0 0 1 4-4h12"
+            /></svg
+          >
+        </button>
+      </div>
+
+      <div class="divider-v"></div>
+
+      <!-- Z-Order Toolbar (shown when 1+ object selected) -->
+      {#if selectedIds.size >= 1}
+        <div class="menu-group align-group">
+          <button
+            onclick={bringToFront}
+            title="Bring to Front (Shift+Alt+])"
+            class="icon-btn"
+            aria-label="Bring to Front"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <rect x="3" y="10" width="11" height="11" rx="1" />
+              <rect
+                x="8"
+                y="5"
+                width="11"
+                height="11"
+                rx="1"
+                fill="currentColor"
+                stroke="currentColor"
+              />
+            </svg>
+          </button>
+          <button
+            onclick={bringForward}
+            title="Bring Forward (Shift+])"
+            class="icon-btn"
+            aria-label="Bring Forward"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <rect x="3" y="12" width="10" height="10" rx="1" />
+              <rect x="9" y="7" width="10" height="10" rx="1" />
+              <polyline points="12 2 12 7" />
+              <polyline points="10 4 12 2 14 4" />
+            </svg>
+          </button>
+          <button
+            onclick={sendBackward}
+            title="Send Backward (Shift+[)"
+            class="icon-btn"
+            aria-label="Send Backward"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <rect x="3" y="12" width="10" height="10" rx="1" />
+              <rect x="9" y="7" width="10" height="10" rx="1" />
+              <polyline points="12 12 12 17" />
+              <polyline points="10 15 12 17 14 15" />
+            </svg>
+          </button>
+          <button
+            onclick={sendToBack}
+            title="Send to Back (Shift+Alt+[)"
+            class="icon-btn"
+            aria-label="Send to Back"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <rect x="8" y="5" width="11" height="11" rx="1" />
+              <rect
+                x="3"
+                y="10"
+                width="11"
+                height="11"
+                rx="1"
+                fill="currentColor"
+                stroke="currentColor"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="divider-v"></div>
+      {/if}
+
+      <!-- Alignment Toolbar (shown when 2+ objects selected) -->
+
+      {#if selectedIds.size >= 2}
+        <div class="menu-group align-group">
+          <button
+            onclick={alignLeft}
+            title="Align Left (Shift+Alt+L)"
+            class="icon-btn"
+            aria-label="Align Left"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="3" y1="3" x2="3" y2="21" />
+              <rect x="5" y="6" width="10" height="5" rx="1" />
+              <rect x="5" y="13" width="14" height="5" rx="1" />
+            </svg>
+          </button>
+          <button
+            onclick={alignCenterH}
+            title="Align Center (Horizontal) (Shift+Alt+C)"
+            class="icon-btn"
+            aria-label="Align Center H"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="12" y1="3" x2="12" y2="21" />
+              <rect x="4" y="6" width="16" height="5" rx="1" />
+              <rect x="7" y="13" width="10" height="5" rx="1" />
+            </svg>
+          </button>
+          <button
+            onclick={alignRight}
+            title="Align Right (Shift+Alt+R)"
+            class="icon-btn"
+            aria-label="Align Right"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="21" y1="3" x2="21" y2="21" />
+              <rect x="5" y="6" width="14" height="5" rx="1" />
+              <rect x="9" y="13" width="10" height="5" rx="1" />
+            </svg>
+          </button>
+
+          <div class="divider-v" style="height:14px;"></div>
+
+          <button
+            onclick={alignTop}
+            title="Align Top (Shift+Alt+T)"
+            class="icon-btn"
+            aria-label="Align Top"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="3" y1="3" x2="21" y2="3" />
+              <rect x="6" y="5" width="5" height="10" rx="1" />
+              <rect x="13" y="5" width="5" height="14" rx="1" />
+            </svg>
+          </button>
+          <button
+            onclick={alignMiddleV}
+            title="Align Middle (Vertical) (Shift+Alt+M)"
+            class="icon-btn"
+            aria-label="Align Middle V"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <rect x="6" y="4" width="5" height="16" rx="1" />
+              <rect x="13" y="7" width="5" height="10" rx="1" />
+            </svg>
+          </button>
+          <button
+            onclick={alignBottom}
+            title="Align Bottom (Shift+Alt+B)"
+            class="icon-btn"
+            aria-label="Align Bottom"
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="3" y1="21" x2="21" y2="21" />
+              <rect x="6" y="5" width="5" height="14" rx="1" />
+              <rect x="13" y="9" width="5" height="10" rx="1" />
+            </svg>
+          </button>
+
+          <div class="divider-v" style="height:14px;"></div>
+
+          <button
+            onclick={distributeH}
+            title="Distribute Horizontally (Shift+Alt+H)"
+            class="icon-btn"
+            aria-label="Distribute H"
+            class:btn-disabled={selectedIds.size < 3}
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="3" y1="3" x2="3" y2="21" />
+              <line x1="21" y1="3" x2="21" y2="21" />
+              <rect x="8" y="7" width="8" height="10" rx="1" />
+            </svg>
+          </button>
+          <button
+            onclick={distributeV}
+            title="Distribute Vertically (Shift+Alt+V)"
+            class="icon-btn"
+            aria-label="Distribute V"
+            class:btn-disabled={selectedIds.size < 3}
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="3" y1="3" x2="21" y2="3" />
+              <line x1="3" y1="21" x2="21" y2="21" />
+              <rect x="7" y="8" width="10" height="8" rx="1" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="divider-v"></div>
+      {/if}
+
+      <div class="menu-group">
+        <button
+          onclick={() => (showExportDialog = true)}
+          title="Export Figure (Ctrl+Shift+E)"
+          class="icon-text-btn export-btn"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            ><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline
+              points="17 8 12 3 7 8"
+            /><line x1="12" y1="3" x2="12" y2="15" /></svg
+          >
+          Export…
+        </button>
+      </div>
+
+      <div class="divider-v"></div>
+
+      <!-- Paper Size Picker -->
+      <div class="menu-group" style="position:relative;">
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="#555"
+          stroke-width="2"
+          style="flex-shrink:0"
+        >
+          <path
+            d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+          />
+          <polyline points="14 2 14 8 20 8" />
+        </svg>
+        <select
+          value={paperKey}
+          onchange={(e) => {
+            paperKey = e.currentTarget.value;
+            tick().then(() => centerCanvas());
+          }}
+          class="paper-select"
+          title="Paper size"
+        >
+          {#each PAPER_SIZES as ps}
+            <option value={ps.key}>{ps.label}</option>
+          {/each}
+        </select>
+        {#if paperKey === "custom"}
+          <input
+            type="number"
+            value={customPaperW}
+            oninput={(e) => {
+              customPaperW = +e.currentTarget.value || 800;
+              tick().then(centerCanvas);
+            }}
+            title="Custom width (px)"
+            class="paper-custom"
+          />
+          <span style="color:#555;font-size:10px">×</span>
+          <input
+            type="number"
+            value={customPaperH}
+            oninput={(e) => {
+              customPaperH = +e.currentTarget.value || 600;
+              tick().then(centerCanvas);
+            }}
+            title="Custom height (px)"
+            class="paper-custom"
+          />
+        {:else}
+          <span class="paper-dims">{resolvedW} × {resolvedH}</span>
+        {/if}
+      </div>
+
+      <div class="divider-v"></div>
+
+      <!-- Layout Presets Button -->
+      <div class="menu-group" style="position:relative;">
+        <button
+          onclick={() => (showLayoutPanel = !showLayoutPanel)}
+          class="icon-text-btn {showLayoutPanel ? 'layout-active' : ''}"
+          title="Layout presets"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <rect x="3" y="3" width="7" height="7" /><rect
+              x="14"
+              y="3"
+              width="7"
+              height="7"
+            />
+            <rect x="3" y="14" width="7" height="7" /><rect
+              x="14"
+              y="14"
+              width="7"
+              height="7"
+            />
+          </svg>
+          Layouts
+        </button>
+        {#if showLayoutPanel}
+          <LayoutPresets
+            paperW={resolvedW}
+            paperH={resolvedH}
+            onApply={(newObjs) => {
+              objects = [...objects, ...newObjs];
+              saveHistory();
+              showLayoutPanel = false;
+              hasStarted = true;
+            }}
+            onClose={() => (showLayoutPanel = false)}
+          />
+        {/if}
       </div>
 
       <!-- Spacer -->
@@ -2327,11 +3744,29 @@
             zoom = 1.0;
             centerCanvas();
           }}
-          title="Reset Zoom to 100%"
+          title="Reset Zoom (100%)"
           class="icon-btn"
-          style="width: 24px; height: 24px; padding: 0; display: flex; align-items: center; justify-content: center;"
+          aria-label="Reset zoom"
         >
-          ⟲
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            ><circle cx="11" cy="11" r="8" /><line
+              x1="21"
+              y1="21"
+              x2="16.65"
+              y2="16.65"
+            /><line x1="11" y1="8" x2="11" y2="14" /><line
+              x1="8"
+              y1="11"
+              x2="14"
+              y2="11"
+            /></svg
+          >
         </button>
         <div
           style="display: flex; align-items: center; gap: 4px; background: #333; padding: 2px 6px; border-radius: 4px;"
@@ -2349,10 +3784,46 @@
           />
           <span style="font-size: 11px; color: #888;">%</span>
         </div>
+
+        <div class="divider-v"></div>
+
+        <!-- About button -->
+        <button
+          onclick={() => (showAboutDialog = true)}
+          title="About SciFigura"
+          class="icon-btn"
+          aria-label="About"
+          style="color: #555;"
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+        </button>
       </div>
     </div>
 
-    <!-- 
+    <!-- Welcome Screen — shown on first launch when canvas is empty -->
+    {#if !hasStarted && objects.length === 0}
+      <WelcomeScreen
+        onNew={handleWelcomeNew}
+        onOpen={handleWelcomeOpen}
+        onImport={handleWelcomeImport}
+      />
+    {/if}
+
+    <!-- About Dialog -->
+    <AboutDialog bind:show={showAboutDialog} />
+
+    <!--
         Canvas fills the remaining area
     -->
     <canvas
@@ -2366,7 +3837,9 @@
       onmousemove={onMouseMove}
       onmouseup={onMouseUp}
       onmouseleave={onMouseUp}
-      style="display: block; width: 100%; height: 100%; cursor: {isSpacePressed
+      oncontextmenu={openContextMenu}
+      style="display: block; width: 100%; height: 100%; cursor: {isSpacePressed ||
+      isPanToolActive
         ? isDragging
           ? 'grabbing'
           : 'grab'
@@ -2379,11 +3852,182 @@
             : 'default'};"
     ></canvas>
 
+    <!-- Context Menu -->
+    {#if contextMenu}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="ctx-backdrop"
+        onclick={closeContextMenu}
+        oncontextmenu={(e) => {
+          e.preventDefault();
+          closeContextMenu();
+        }}
+      ></div>
+      <div
+        class="ctx-menu"
+        style="left:{contextMenu.x}px; top:{contextMenu.y}px;"
+      >
+        {#if contextMenu.objectId || selectedIds.size > 0}
+          <button
+            class="ctx-item"
+            onclick={() => {
+              bringToFront();
+              closeContextMenu();
+            }}>Bring to Front <span class="ctx-key">⇧⌥]</span></button
+          >
+          <button
+            class="ctx-item"
+            onclick={() => {
+              bringForward();
+              closeContextMenu();
+            }}>Bring Forward <span class="ctx-key">⇧]</span></button
+          >
+          <button
+            class="ctx-item"
+            onclick={() => {
+              sendBackward();
+              closeContextMenu();
+            }}>Send Backward <span class="ctx-key">⇧[</span></button
+          >
+          <button
+            class="ctx-item"
+            onclick={() => {
+              sendToBack();
+              closeContextMenu();
+            }}>Send to Back <span class="ctx-key">⇧⌥[</span></button
+          >
+          <div class="ctx-sep"></div>
+          <button
+            class="ctx-item"
+            onclick={() => {
+              copySelected();
+              closeContextMenu();
+            }}>Copy <span class="ctx-key">⌘C</span></button
+          >
+          <button
+            class="ctx-item"
+            onclick={() => {
+              cutSelected();
+              closeContextMenu();
+            }}>Cut <span class="ctx-key">⌘X</span></button
+          >
+          <button
+            class="ctx-item"
+            onclick={() => {
+              duplicateSelected();
+              closeContextMenu();
+            }}>Duplicate <span class="ctx-key">⌘D</span></button
+          >
+          <div class="ctx-sep"></div>
+          <button
+            class="ctx-item ctx-danger"
+            onclick={() => {
+              saveHistory();
+              objects = objects.filter((o) => !selectedIds.has(o.id));
+              selectedIds = new Set();
+              closeContextMenu();
+            }}>Delete <span class="ctx-key">⌫</span></button
+          >
+        {:else}
+          <button
+            class="ctx-item"
+            onclick={() => {
+              pasteClipboard();
+              closeContextMenu();
+            }}>Paste <span class="ctx-key">⌘V</span></button
+          >
+        {/if}
+      </div>
+    {/if}
+
     <div class="status-bar">
-      World: {Math.round((lastMousePos.x - offset.x) / zoom)}, {Math.round(
-        (lastMousePos.y - offset.y) / zoom,
-      )}
-      | Grid: {showGrid ? "ON" : "OFF"} | Snap: {snapToGrid ? "ON" : "OFF"}
+      <!-- Tool indicator -->
+      <span class="status-segment">
+        <span class="status-label">Tool</span>
+        {#if isPanToolActive}
+          Pan
+        {:else if mode === "select"}
+          Select
+        {:else if mode === "draw_rectangle"}
+          Rectangle
+        {:else if mode === "draw_ellipse"}
+          Ellipse
+        {:else if mode === "draw_line"}
+          Line
+        {:else if mode === "draw_text"}
+          Text
+        {:else if mode === "draw_scalebar"}
+          Scale Bar
+        {:else if mode === "draw_label"}
+          Panel Label
+        {:else}
+          {mode}
+        {/if}
+      </span>
+      <span class="status-divider">|</span>
+      <!-- Cursor world position -->
+      <span class="status-segment">
+        <span class="status-label">X</span>{Math.round(
+          (lastMousePos.x - offset.x) / zoom,
+        )}
+        <span class="status-label" style="margin-left:6px">Y</span>{Math.round(
+          (lastMousePos.y - offset.y) / zoom,
+        )}
+      </span>
+      <span class="status-divider">|</span>
+      <!-- Selection & object count -->
+      <span class="status-segment">
+        {#if selectedIds.size > 0}
+          <span style="color:#5aabff">{selectedIds.size} selected</span>
+        {:else}
+          <span style="color:#555">none selected</span>
+        {/if}
+        &nbsp;·&nbsp;{objects.length} object{objects.length === 1 ? "" : "s"}
+      </span>
+      <span class="status-divider">|</span>
+      <!-- Grid / Snap toggles + size picker -->
+      <span class="status-segment">
+        <button
+          class="status-toggle {showGrid ? 'on' : 'off'}"
+          onclick={() => (showGrid = !showGrid)}
+          title="Toggle Grid (Ctrl+G)">Grid</button
+        >
+        <button
+          class="status-toggle {snapToGrid ? 'on' : 'off'}"
+          onclick={() => (snapToGrid = !snapToGrid)}
+          title="Toggle Snap (Ctrl+Shift+G)">Snap</button
+        >
+        {#if showGrid}
+          <select
+            class="grid-size-select"
+            value={gridSizeKey}
+            onchange={(e) => {
+              const v = e.currentTarget.value;
+              gridSizeKey =
+                v === "custom" ? "custom" : (+v as typeof gridSizeKey);
+            }}
+            title="Grid size"
+          >
+            {#each GRID_PRESETS as p}
+              <option value={p}>{p}px</option>
+            {/each}
+            <option value="custom">Custom…</option>
+          </select>
+          {#if gridSizeKey === "custom"}
+            <input
+              type="number"
+              class="grid-custom-input"
+              min="1"
+              max="500"
+              step="1"
+              value={gridSizeCustom}
+              oninput={(e) =>
+                (gridSizeCustom = Math.max(1, +e.currentTarget.value || 20))}
+              title="Custom grid size (px)"
+            />
+          {/if}
+        {/if}
+      </span>
     </div>
 
     {#if textInput.visible}
@@ -2471,6 +4115,344 @@
       </div>
     {/if}
 
+    {#if showShortcutsHelp}
+      <!-- Keyboard Shortcuts Overlay -->
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_interactive_supports_focus -->
+      <div
+        style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.65); display: flex; align-items: center; justify-content: center; z-index: 3000;"
+        onclick={() => (showShortcutsHelp = false)}
+        role="button"
+        tabindex="-1"
+      >
+        <div
+          style="background: #1e1e1e; padding: 24px 28px; border-radius: 10px; width: 580px; max-height: 85vh; overflow-y: auto; color: #e0e0e0; border: 1px solid #3a3a3a; box-shadow: 0 12px 40px rgba(0,0,0,0.8);"
+          onclick={(e) => e.stopPropagation()}
+          role="presentation"
+        >
+          <div
+            style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; border-bottom: 1px solid #333; padding-bottom: 12px;"
+          >
+            <h2 style="margin: 0; font-size: 15px; color: #fff;">
+              &#9000;&#65039; Keyboard Shortcuts
+            </h2>
+            <button
+              onclick={() => (showShortcutsHelp = false)}
+              style="background: transparent; border: none; color: #666; font-size: 22px; cursor: pointer; line-height: 1; padding: 0 4px;"
+              >&times;</button
+            >
+          </div>
+          <div
+            style="display: grid; grid-template-columns: 1fr 1fr; gap: 0 32px;"
+          >
+            <div>
+              <p
+                style="font-size:11px;text-transform:uppercase;color:#555;font-weight:600;margin:0 0 8px 0;"
+              >
+                Tools
+              </p>
+              <table
+                style="width:100%;border-collapse:collapse;font-size:13px;"
+              >
+                <tbody>
+                  <tr
+                    ><td style="padding:3px 0;width:90px;"
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >V</kbd
+                      ></td
+                    ><td style="color:#aaa;">Select</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >R</kbd
+                      ></td
+                    ><td style="color:#aaa;">Rectangle</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >E</kbd
+                      ></td
+                    ><td style="color:#aaa;">Ellipse</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >L</kbd
+                      ></td
+                    ><td style="color:#aaa;">Line</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >T</kbd
+                      ></td
+                    ><td style="color:#aaa;">Text</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >P</kbd
+                      ></td
+                    ><td style="color:#aaa;">Pan (hold)</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >S</kbd
+                      ></td
+                    ><td style="color:#aaa;">Scale Bar</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >H</kbd
+                      ></td
+                    ><td style="color:#aaa;">Label</td></tr
+                  >
+                </tbody>
+              </table>
+              <p
+                style="font-size:11px;text-transform:uppercase;color:#555;font-weight:600;margin:16px 0 8px 0;"
+              >
+                Selection
+              </p>
+              <table
+                style="width:100%;border-collapse:collapse;font-size:13px;"
+              >
+                <tbody>
+                  <tr
+                    ><td style="padding:3px 0;width:150px;"
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+A</kbd
+                      ></td
+                    ><td style="color:#aaa;">Select all</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+Shift+A</kbd
+                      ></td
+                    ><td style="color:#aaa;">Select same type</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Escape</kbd
+                      ></td
+                    ><td style="color:#aaa;">Deselect / close</td></tr
+                  >
+                </tbody>
+              </table>
+              <p
+                style="font-size:11px;text-transform:uppercase;color:#555;font-weight:600;margin:16px 0 8px 0;"
+              >
+                View
+              </p>
+              <table
+                style="width:100%;border-collapse:collapse;font-size:13px;"
+              >
+                <tbody>
+                  <tr
+                    ><td style="padding:3px 0;width:150px;"
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+G</kbd
+                      ></td
+                    ><td style="color:#aaa;">Group selected</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+Shift+G</kbd
+                      ></td
+                    ><td style="color:#aaa;">Ungroup selected</td></tr
+                  >
+                  <tr
+                    ><td style="padding:3px 0;width:150px;"
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+'</kbd
+                      ></td
+                    ><td style="color:#aaa;">Toggle grid</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+Shift+'</kbd
+                      ></td
+                    ><td style="color:#aaa;">Toggle snap</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >?</kbd
+                      ></td
+                    ><td style="color:#aaa;">Shortcut cheatsheet</td></tr
+                  >
+                </tbody>
+              </table>
+            </div>
+            <div>
+              <p
+                style="font-size:11px;text-transform:uppercase;color:#555;font-weight:600;margin:0 0 8px 0;"
+              >
+                Edit
+              </p>
+              <table
+                style="width:100%;border-collapse:collapse;font-size:13px;"
+              >
+                <tbody>
+                  <tr
+                    ><td style="padding:3px 0;width:155px;"
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+Z</kbd
+                      ></td
+                    ><td style="color:#aaa;">Undo</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+Shift+Z</kbd
+                      ></td
+                    ><td style="color:#aaa;">Redo</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+C</kbd
+                      ></td
+                    ><td style="color:#aaa;">Copy</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+X</kbd
+                      ></td
+                    ><td style="color:#aaa;">Cut</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+V</kbd
+                      ></td
+                    ><td style="color:#aaa;">Paste</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+D</kbd
+                      ></td
+                    ><td style="color:#aaa;">Duplicate</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Del / Bksp</kbd
+                      ></td
+                    ><td style="color:#aaa;">Delete selected</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Arrows</kbd
+                      ></td
+                    ><td style="color:#aaa;">Nudge 1 px</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Shift+Arrow</kbd
+                      ></td
+                    ><td style="color:#aaa;">Nudge 10 px</td></tr
+                  >
+                </tbody>
+              </table>
+              <p
+                style="font-size:11px;text-transform:uppercase;color:#555;font-weight:600;margin:16px 0 8px 0;"
+              >
+                File
+              </p>
+              <table
+                style="width:100%;border-collapse:collapse;font-size:13px;"
+              >
+                <tbody>
+                  <tr
+                    ><td style="padding:3px 0;width:155px;"
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+N</kbd
+                      ></td
+                    ><td style="color:#aaa;">New canvas</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+O</kbd
+                      ></td
+                    ><td style="color:#aaa;">Import image</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+S</kbd
+                      ></td
+                    ><td style="color:#aaa;">Save project</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >Ctrl+Shift+E</kbd
+                      ></td
+                    ><td style="color:#aaa;">Export figure</td></tr
+                  >
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <p
+            style="font-size:11px;color:#444;margin:18px 0 0 0;text-align:center;border-top:1px solid #2a2a2a;padding-top:10px;"
+          >
+            Press <kbd
+              style="background:#2a2a2a;color:#ddd;padding:1px 5px;border-radius:3px;font-size:11px;border:1px solid #444;"
+              >?</kbd
+            >
+            or
+            <kbd
+              style="background:#2a2a2a;color:#ddd;padding:1px 5px;border-radius:3px;font-size:11px;border:1px solid #444;"
+              >Esc</kbd
+            > to close
+          </p>
+        </div>
+      </div>
+    {/if}
+
     <!-- Status Bar with Zoom Controls -->
     <!-- REMOVED FLOATING STATUS BAR -->
   </div>
@@ -2487,6 +4469,15 @@
     </div>
   {/if}
 
+  <!-- Right Sidebar: Layers -->
+  <LayersPanel
+    {objects}
+    {selectedIds}
+    updateObject={updateObjectProperty}
+    {reorderObjects}
+    {toggleSelection}
+  />
+
   <!-- Right Sidebar: Properties -->
   <PropertiesPanel
     selection={selectedObjects}
@@ -2501,8 +4492,6 @@
     bind:defaultFontStyle
     {applyStyleToSelected}
     {applyFontToSelected}
-    {alignSelected}
-    {distributeSelected}
     {resetLabelSequence}
     onStyleChange={(prop, val) => {
       // Intercept changes from PropertiesPanel to update Tool Styles
@@ -2556,18 +4545,94 @@
   .top-bar button {
     background: transparent;
     border: 1px solid transparent;
-    color: #ccc;
-    padding: 4px 10px;
-    border-radius: 3px;
+    color: #bbb;
+    border-radius: 4px;
     cursor: pointer;
     font-size: 11px;
-    transition: all 0.2s;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    line-height: 1;
   }
 
   .top-bar button:hover {
-    background: #444;
-    color: white;
+    background: #3a3a3a;
+    color: #eee;
     border-color: #555;
+  }
+
+  /* Icon + text button */
+  .top-bar .icon-text-btn {
+    padding: 4px 9px;
+  }
+
+  /* Icon-only button */
+  .top-bar .icon-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  /* Export button gets a subtle blue tint */
+  .top-bar .export-btn {
+    color: #5aabff;
+  }
+  .top-bar .export-btn:hover {
+    background: rgba(90, 171, 255, 0.12);
+    color: #7fc0ff;
+    border-color: rgba(90, 171, 255, 0.3);
+  }
+
+  /* Paper size picker */
+  .paper-select {
+    background: transparent;
+    border: none;
+    color: #888;
+    font-size: 11px;
+    cursor: pointer;
+    outline: none;
+    max-width: 140px;
+  }
+  .paper-select:hover {
+    color: #ccc;
+  }
+  .paper-dims {
+    font-size: 10px;
+    color: #3a3a3a;
+    font-family: monospace;
+    white-space: nowrap;
+  }
+  .paper-custom {
+    width: 52px;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    color: #888;
+    font-size: 10px;
+    border-radius: 3px;
+    padding: 2px 4px;
+    text-align: right;
+  }
+
+  /* Layout presets active state */
+  .top-bar .layout-active {
+    background: #2a2a3a;
+    border-color: #3a4a6a;
+    color: #7a9aff;
+  }
+
+  /* Alignment toolbar */
+  .align-group {
+    gap: 1px;
+  }
+
+  .top-bar .btn-disabled {
+    opacity: 0.35;
+    pointer-events: none;
   }
 
   /* Canvas element flex grow to fill space below top bar */
@@ -2580,13 +4645,162 @@
     bottom: 0;
     left: 0;
     right: 0;
-    background: #2c2c2c;
-    color: #888;
-    padding: 2px 10px;
+    background: #252525;
+    color: #777;
+    padding: 0 10px;
     font-family: monospace;
     font-size: 10px;
     user-select: none;
     z-index: 100;
     border-top: 1px solid #1a1a1a;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    height: 22px;
+  }
+
+  .status-segment {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+    white-space: nowrap;
+  }
+
+  .status-label {
+    color: #444;
+    text-transform: uppercase;
+    font-size: 9px;
+    letter-spacing: 0.5px;
+    margin-right: 2px;
+  }
+
+  .status-divider {
+    color: #333;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+
+  /* Clickable grid/snap toggles in status bar */
+  .status-toggle {
+    background: transparent;
+    border: 1px solid transparent;
+    font-family: monospace;
+    font-size: 10px;
+    cursor: pointer;
+    padding: 1px 5px;
+    border-radius: 3px;
+    transition: all 0.1s;
+  }
+  .status-toggle.on {
+    color: #5aabff;
+    border-color: #2a4a70;
+  }
+  .status-toggle.off {
+    color: #444;
+    border-color: transparent;
+  }
+  .status-toggle:hover {
+    background: #333;
+    color: #aaa;
+  }
+
+  /* Grid size select in status bar */
+  .grid-size-select {
+    background: transparent;
+    border: none;
+    color: #444;
+    font-size: 10px;
+    cursor: pointer;
+    outline: none;
+    padding: 0 2px;
+  }
+  .grid-size-select:hover {
+    color: #aaa;
+  }
+  .grid-size-select option {
+    background: #2a2a2a;
+    color: #ccc;
+  }
+
+  .grid-custom-input {
+    width: 38px;
+    background: #2a2a2a;
+    border: 1px solid #333;
+    color: #888;
+    font-size: 10px;
+    border-radius: 2px;
+    padding: 1px 3px;
+    text-align: right;
+  }
+
+  /* Context Menu */
+  .ctx-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10000;
+  }
+
+  .ctx-menu {
+    position: fixed;
+    z-index: 10001;
+    background: #252526;
+    border: 1px solid #3e3e42;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    padding: 4px 0;
+    min-width: 180px;
+    color: #ccc;
+    font-size: 12px;
+    font-family:
+      system-ui,
+      -apple-system,
+      sans-serif;
+  }
+
+  .ctx-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 6px 12px;
+    background: none;
+    border: none;
+    color: #ccc;
+    font-size: 12px;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .ctx-item:hover {
+    background: #094771;
+    color: #fff;
+  }
+
+  .ctx-key {
+    color: #888;
+    font-size: 11px;
+    margin-left: 12px;
+  }
+
+  .ctx-item:hover .ctx-key {
+    color: #ccc;
+  }
+
+  .ctx-sep {
+    height: 1px;
+    background: #3e3e42;
+    margin: 4px 0;
+  }
+
+  .ctx-danger {
+    color: #d64937;
+  }
+  .ctx-danger:hover {
+    background: #d64937;
+    color: #fff;
   }
 </style>
