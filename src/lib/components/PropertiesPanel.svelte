@@ -826,22 +826,4 @@
   }
 
   /* Alignment Grids */
-  .icon-grid {
-    display: grid;
-    grid-template-columns: repeat(6, 1fr);
-    gap: 2px;
-  }
-
-  .icon-grid button {
-    background: transparent;
-    border: 1px solid transparent;
-    color: #aaa;
-    border-radius: 3px;
-    padding: 4px;
-    cursor: pointer;
-  }
-  .icon-grid button:hover {
-    background: #444;
-    color: white;
-  }
 </style>

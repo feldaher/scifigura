@@ -13,10 +13,12 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@resvg/resvg-wasm": "^2.6.2",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "~2.6.0",
     "@tauri-apps/plugin-fs": "~2.4.5",
-    "@tauri-apps/plugin-opener": "^2"
+    "@tauri-apps/plugin-opener": "^2",
+    "pdfjs-dist": "^5.5.207"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",

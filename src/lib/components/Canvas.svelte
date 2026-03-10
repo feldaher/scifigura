@@ -13,6 +13,8 @@
   import { listen } from "@tauri-apps/api/event";
   import { drawObject } from "../utils/render";
   import { exportCanvas, type ExportOptions } from "../utils/export";
+  import { renderSvgToDataUrl } from "../utils/svg";
+  import { renderPdfPageToDataUrl } from "../utils/pdf";
 
   // Props
   let { width = 800, height = 600 } = $props();
@@ -1211,7 +1213,7 @@
           multiple: true,
           filters: [
             {
-              name: "Images",
+              name: "Supported Files",
               extensions: [
                 "png",
                 "jpg",
@@ -1221,7 +1223,13 @@
                 "bmp",
                 "tiff",
                 "tif",
+                "svg",
+                "pdf",
               ],
+            },
+            {
+              name: "Vectors & PDFs",
+              extensions: ["svg", "pdf"],
             },
           ],
         });
@@ -1246,8 +1254,33 @@
     const input = e.target as HTMLInputElement;
     if (input.files && input.files.length > 0) {
       const file = input.files[0];
-      // Use Object URL for browser files
-      const objectUrl = URL.createObjectURL(file);
+      let objectUrl = "";
+
+      try {
+        if (
+          file.type === "application/pdf" ||
+          file.name.toLowerCase().endsWith(".pdf")
+        ) {
+          const buffer = await file.arrayBuffer();
+          objectUrl = await renderPdfPageToDataUrl(buffer);
+        } else if (
+          file.type === "image/svg+xml" ||
+          file.name.toLowerCase().endsWith(".svg")
+        ) {
+          const text = await file.text();
+          objectUrl = await renderSvgToDataUrl(text);
+        } else if (file.type.startsWith("image/")) {
+          objectUrl = URL.createObjectURL(file);
+        } else {
+          console.log("Skipping non-image/pdf file:", file.name, file.type);
+          input.value = "";
+          return;
+        }
+      } catch (err) {
+        console.error("Failed to process fallback input file:", err);
+        input.value = "";
+        return;
+      }
 
       const img = new Image();
       img.src = objectUrl;
@@ -1288,8 +1321,17 @@
       if (isTauri() && !path.startsWith("blob:")) {
         console.log("Reading file bytes to avoid WKWebView tainted canvas...");
         const bytes = await readFile(path);
-        const blob = new Blob([bytes]);
-        assetUrl = URL.createObjectURL(blob);
+        const lcPath = path.toLowerCase();
+
+        if (lcPath.endsWith(".pdf")) {
+          assetUrl = await renderPdfPageToDataUrl(bytes.buffer);
+        } else if (lcPath.endsWith(".svg")) {
+          const text = new TextDecoder().decode(bytes);
+          assetUrl = await renderSvgToDataUrl(text);
+        } else {
+          const blob = new Blob([bytes]);
+          assetUrl = URL.createObjectURL(blob);
+        }
       }
 
       img.src = assetUrl;
@@ -1297,7 +1339,7 @@
         img.onload = resolve;
         img.onerror = reject;
       });
-    } catch (e) {
+    } catch (e: any) {
       console.warn("Failed to load image:", e);
       return;
     }
@@ -1341,15 +1383,28 @@
       console.log("Dropped files:", files);
 
       for (const file of files) {
-        if (!file.type.startsWith("image/")) {
-          console.log("Skipping non-image file:", file.name, file.type);
-          continue;
-        }
+        let objectUrl = "";
 
         try {
-          // Use Object URL for dropped files (safest cross-platform way for drop)
-          // This works even if we don't have the full path
-          const objectUrl = URL.createObjectURL(file);
+          if (
+            file.type === "application/pdf" ||
+            file.name.toLowerCase().endsWith(".pdf")
+          ) {
+            const buffer = await file.arrayBuffer();
+            objectUrl = await renderPdfPageToDataUrl(buffer);
+          } else if (
+            file.type === "image/svg+xml" ||
+            file.name.toLowerCase().endsWith(".svg")
+          ) {
+            const text = await file.text();
+            objectUrl = await renderSvgToDataUrl(text);
+          } else if (file.type.startsWith("image/")) {
+            objectUrl = URL.createObjectURL(file);
+          } else {
+            console.log("Skipping non-image/pdf file:", file.name, file.type);
+            continue;
+          }
+
           console.log("Created Object URL for drop:", objectUrl);
 
           const img = new Image();
@@ -3218,7 +3273,7 @@
 
   <input
     type="file"
-    accept="image/*"
+    accept="image/*,application/pdf,.svg,.pdf"
     style="display: none;"
     bind:this={imageInput}
     onchange={handleBrowserFileSelect}
@@ -3293,6 +3348,26 @@
             /></svg
           >
           Save
+        </button>
+        <button
+          onclick={importImage}
+          title="Import Image/Vector"
+          class="icon-text-btn"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            ><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle
+              cx="8.5"
+              cy="8.5"
+              r="1.5"
+            /><polyline points="21 15 16 10 5 21" /></svg
+          >
+          Import
         </button>
       </div>
 
