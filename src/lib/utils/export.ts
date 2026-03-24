@@ -1,7 +1,9 @@
 import type { CanvasObject } from '../types';
 import { drawObject } from './render';
+import { jsPDF } from 'jspdf';
+import 'svg2pdf.js';
 
-export type ExportFormat = 'png' | 'tiff' | 'svg';
+export type ExportFormat = 'png' | 'tiff' | 'svg' | 'pdf';
 export type ExportDPI = 72 | 300 | 600;
 
 export interface ExportOptions {
@@ -76,9 +78,70 @@ export async function exportCanvas(
 
   if (options.format === 'svg') {
     return exportSVG(objects, { minX, minY, width, height });
+  } else if (options.format === 'pdf') {
+    return exportPDF(objects, { minX, minY, width, height }, options.dpi);
   } else {
     return exportRaster(objects, { minX, minY, width, height }, options, imageCache);
   }
+}
+
+async function exportPDF(
+    objects: CanvasObject[], 
+    bounds: { minX: number, minY: number, width: number, height: number },
+    dpi: number
+): Promise<Blob> {
+    const { minX, minY, width, height } = bounds;
+    
+    // Downsample images to the target DPI
+    // 1 "canvas unit" (pt) is 1/72 inch. Target pixels = width_in_pt * (dpi / 72)
+    const scale = dpi / 72;
+    const clonedObjects = await Promise.all(objects.map(async (obj) => {
+        if (obj.type === "image" && obj.src) {
+            // Load original image
+            const img = new Image();
+            img.src = obj.src;
+            await new Promise((res) => { img.onload = res; img.onerror = res; });
+            
+            // Calculate target pixel dimensions based on canvas width and specified DPI
+            const targetW = Math.ceil(obj.width * scale);
+            const targetH = Math.ceil(obj.height * scale);
+            
+            // Only downsample if the original is actually larger than the target resolution
+            if (img.naturalWidth > targetW || img.naturalHeight > targetH) {
+                const c = document.createElement("canvas");
+                c.width = targetW;
+                c.height = targetH;
+                const ctx = c.getContext("2d");
+                if (ctx) {
+                    ctx.drawImage(img, 0, 0, targetW, targetH);
+                    return { ...obj, src: c.toDataURL("image/jpeg", 0.9) };
+                }
+            }
+        }
+        return obj;
+    }));
+
+    const svgBlob = exportSVG(clonedObjects, bounds);
+    const svgText = await svgBlob.text();
+    
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(svgText, "image/svg+xml");
+    const svgElement = doc.documentElement;
+
+    const pdf = new jsPDF({
+        orientation: width > height ? 'l' : 'p',
+        unit: 'pt',
+        format: [width, height]
+    });
+
+    await pdf.svg(svgElement, {
+        x: 0,
+        y: 0,
+        width: width,
+        height: height
+    });
+
+    return pdf.output("blob");
 }
 
 function exportSVG(

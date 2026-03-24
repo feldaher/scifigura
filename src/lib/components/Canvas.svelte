@@ -4628,6 +4628,7 @@
               <option value="png">PNG (Raster)</option>
               <option value="tiff">TIFF (Raster)</option>
               <option value="svg">SVG (Vector)</option>
+              <option value="pdf">PDF (Vector)</option>
             </select>
           </div>
 
@@ -4653,6 +4654,11 @@
             {#if exportConfig.format === "svg"}
               <div style="font-size: 11px; color: #888; margin-top: 5px;">
                 Resolution irrelevant for vector export
+              </div>
+            {/if}
+            {#if exportConfig.format === "pdf"}
+              <div style="font-size: 11px; color: #888; margin-top: 5px;">
+                Controls resolution of embedded raster images
               </div>
             {/if}
           </div>
