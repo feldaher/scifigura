@@ -12,7 +12,7 @@
   import { loadCustomPresets, saveCustomPresets, type CustomPreset } from "../utils/presets";
   import type { CanvasObject, InteractionMode } from "../types";
   import { open, save } from "@tauri-apps/plugin-dialog";
-  import { readFile, writeFile } from "@tauri-apps/plugin-fs";
+  import { readFile, writeFile, writeTextFile, readTextFile, exists, remove, BaseDirectory } from "@tauri-apps/plugin-fs";
   import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { drawObject } from "../utils/render";
@@ -340,7 +340,46 @@
     } catch (e) {
       console.error("Failed to load presets", e);
     }
+
+    if (isTauri()) {
+      try {
+        const hasRecovery = await exists("recovery.json", { baseDir: BaseDirectory.AppData });
+        if (hasRecovery) {
+          recoveryData = await readTextFile("recovery.json", { baseDir: BaseDirectory.AppData });
+          showRecoveryDialog = true;
+        }
+      } catch (err) {
+        console.error("Recovery check failed:", err);
+      }
+
+      // 60-second AutoSave loop
+      setInterval(async () => {
+        if (showRecoveryDialog) return; // Wait until they decide
+        try {
+          const data = JSON.stringify(objects, null, 2);
+          await writeTextFile("recovery.json", data, { baseDir: BaseDirectory.AppData });
+        } catch (err) {
+          console.warn("Auto-save failed:", err);
+        }
+      }, 60000);
+    }
   });
+
+  async function handleRecover(accept: boolean) {
+    showRecoveryDialog = false;
+    if (accept && recoveryData) {
+      try {
+        objects = JSON.parse(recoveryData);
+        saveHistory(); 
+      } catch (err) {
+        alert("Recovery file was corrupted.");
+      }
+    }
+    recoveryData = null;
+    if (isTauri()) {
+      await remove("recovery.json", { baseDir: BaseDirectory.AppData }).catch(() => {});
+    }
+  }
 
   async function handleSavePresets(newPresets: CustomPreset[]) {
     try {
@@ -652,6 +691,8 @@
 
   // Export State
   let showExportDialog = $state(false);
+  let showRecoveryDialog = $state(false);
+  let recoveryData = $state<string | null>(null);
   let exportConfig = $state<ExportOptions>({
     format: "png",
     dpi: 300,
@@ -3600,6 +3641,8 @@
       });
       if (path) {
         await writeFile(path, new TextEncoder().encode(data));
+        // Clear recovery file cleanly after an explicit external save
+        await remove("recovery.json", { baseDir: BaseDirectory.AppData }).catch(() => {});
       }
     } else {
       // Web fallback
@@ -4602,6 +4645,37 @@
         style="position: fixed; left: {textInput.x}px; top: {textInput.y}px; z-index: 200; font-size: 20px; font-family: Arial; padding: 2px; border: 1px solid #2196f3; outline: none; background: white; color: black;"
         placeholder="Type text..."
       />
+    {/if}
+
+    {#if showRecoveryDialog}
+      <!-- Recovery Dialog Overlay -->
+      <div
+        style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 5000;"
+      >
+        <div
+          style="background: #2c2c2c; padding: 25px; border-radius: 8px; width: 350px; color: white; border: 1px solid #444; box-shadow: 0 4px 12px rgba(0,0,0,0.5);"
+        >
+          <h3 style="margin-top: 0; color: #ffeb3b;">Recover Unsaved Work?</h3>
+          <p style="color: #ccc; font-size: 14px; line-height: 1.5;">
+            It looks like SciFigura was closed unexpectedly. We found an auto-saved recovery file. Would you like to restore it?
+          </p>
+
+          <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button
+              onclick={() => handleRecover(false)}
+              style="padding: 8px 16px; background: transparent; border: 1px solid #555; color: #ccc; border-radius: 4px; cursor: pointer;"
+            >
+              Discard
+            </button>
+            <button
+              onclick={() => handleRecover(true)}
+              style="padding: 8px 16px; background: #2196F3; border: none; color: white; border-radius: 4px; cursor: pointer; font-weight: bold;"
+            >
+              Yes, Restore
+            </button>
+          </div>
+        </div>
+      </div>
     {/if}
 
     {#if showExportDialog}
