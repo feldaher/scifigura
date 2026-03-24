@@ -1558,7 +1558,7 @@
     value: string | number,
   ) {
     const selectedObjects = objects.filter(
-      (obj) => selectedIds.has(obj.id) && obj.type === "text",
+      (obj) => selectedIds.has(obj.id) && (obj.type === "text" || obj.type === "label"),
     );
 
     if (selectedObjects.length === 0) return;
@@ -2226,10 +2226,15 @@
       if (mode === "draw_label") {
         const labelText = getLabelText(nextLabelIndex);
 
+        const tStyle = toolStyles["draw_label"] || {};
         // Use persisted label style or sensible default
         const labelFill =
-          toolStyles["draw_label"]?.fill ||
+          tStyle.fill ||
           (defaultFillColor === "#ffffff" ? "#000000" : defaultFillColor);
+        const labelFontSize = tStyle.fontSize || 24;
+        const labelFontWeight = tStyle.fontWeight || "bold";
+        const labelFontFamily = tStyle.fontFamily || defaultFontFamily;
+        const labelFontStyle = tStyle.fontStyle || "normal";
 
         const newLabel: CanvasObject = {
           id: crypto.randomUUID(),
@@ -2239,9 +2244,10 @@
           width: 20, // Approx
           height: 20,
           text: labelText,
-          fontSize: 24,
-          fontWeight: "bold",
-          fontFamily: defaultFontFamily,
+          fontSize: labelFontSize,
+          fontWeight: labelFontWeight,
+          fontFamily: labelFontFamily,
+          fontStyle: labelFontStyle,
           fill: labelFill,
           // Custom label props
           autoIncrement: true,
