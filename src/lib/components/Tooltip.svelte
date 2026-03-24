@@ -1,9 +1,9 @@
 <script>
-  let { label = "", shortcut = "" } = $props();
+  let { label = "", shortcut = "", children } = $props();
 </script>
 
 <div class="tooltip-wrap">
-  <slot />
+  {@render children?.()}
   {#if label}
     <div class="tooltip">
       <span class="tooltip-label">{label}</span>

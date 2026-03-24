@@ -34,10 +34,17 @@ export interface CanvasObject {
   labelStyle?: "uppercase" | "lowercase" | "number";
   parentheses?: "none" | "()" | ")";
 
-  // For scalebars
+  // For scalebars and labels
   physicalLength?: number;
   units?: string;
-  showText?: boolean;
+  pixelSize?: number;
+  labelPosition?: string; // "above" | "below" | "none" for scalebar, or "top-left" for layout
+  backgroundColor?: string;
+  backgroundOpacity?: number;
+  presetPosition?: string;
+  parentId?: string; // ID of the linked image
+  offsetX?: number;  // Relative to parent image
+  offsetY?: number;  // Relative to parent image
 
   // For images
   src?: string;

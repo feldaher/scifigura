@@ -122,30 +122,62 @@ export function drawObject(
     obj.width = metrics.width;
     obj.height = fontSize;
   } else if (obj.type === "scalebar") {
-    // Scale Bar: Text top, Bar bottom
     const barHeight = obj.strokeWidth || 4;
-    const color = obj.stroke || "#000";
+    const color = obj.fill || obj.stroke || "#000";
+    const label = `${obj.physicalLength || 0} ${obj.units || ""}`;
+    const fontSize = obj.fontSize || 14;
+    const fontFamily = obj.fontFamily || "Arial";
+    const labelPos = obj.labelPosition || "above";
 
-    // Draw Bar at bottom
-    ctx.fillStyle = color;
-    ctx.fillRect(obj.x, obj.y + obj.height - barHeight, obj.width, barHeight);
+    ctx.font = `normal ${fontSize}px ${fontFamily}`;
+    
+    let textWidth = 0;
+    let textHeight = 0;
+    if (labelPos !== "none") {
+      const metrics = ctx.measureText(label);
+      textWidth = metrics.width;
+      textHeight = fontSize;
+    }
 
-    // Draw Text aligned to bottom of text area (above bar)
-    if (obj.showText !== false) {
-      const label = `${obj.physicalLength} ${obj.units || "units"}`;
-      const fontSize = obj.fontSize || 14;
-      ctx.font = `normal ${fontSize}px Arial`;
+    // Treat obj.x and obj.y as the exact top-left of the SCALE BAR itself.
+    let barY = obj.y + (obj.height > barHeight ? (obj.height - barHeight) / 2 : 0);
+    const centerX = obj.x + obj.width / 2;
+    let textY = barY;
+
+    if (labelPos === "above") {
+      textY = barY - 4 - textHeight;
+    } else if (labelPos === "below") {
+      textY = barY + barHeight + 4;
+    }
+
+    // Draw Background Box if specified
+    if (obj.backgroundColor && obj.backgroundColor !== "transparent") {
+      const padding = 6;
+      let boxTop = Math.min(barY, labelPos !== "none" ? textY : barY);
+      let boxBottom = Math.max(barY + barHeight, labelPos !== "none" ? textY + textHeight : barY + barHeight);
+      let boxLeft = Math.min(obj.x, centerX - textWidth / 2);
+      let boxRight = Math.max(obj.x + obj.width, centerX + textWidth / 2);
+
+      ctx.save();
+      ctx.globalAlpha = obj.backgroundOpacity ?? 1.0;
+      ctx.fillStyle = obj.backgroundColor;
+      ctx.fillRect(boxLeft - padding, boxTop - padding, (boxRight - boxLeft) + padding * 2, (boxBottom - boxTop) + padding * 2);
+      ctx.restore();
+    }
+
+    // Draw Text
+    if (labelPos !== "none") {
       ctx.fillStyle = color;
       ctx.textAlign = "center";
-      ctx.textBaseline = "bottom"; // Text sits on the baseline
-      // Position: Center X, Top of bar - padding
-      ctx.fillText(
-        label,
-        obj.x + obj.width / 2,
-        obj.y + obj.height - barHeight - 2,
-      );
+      ctx.textBaseline = "top";
+      ctx.fillText(label, centerX, textY);
       ctx.textAlign = "start"; // Reset
     }
+
+    // Draw Bar
+    ctx.fillStyle = color;
+    ctx.fillRect(obj.x, barY, obj.width, barHeight);
+
     ctx.restore();
     return; // Scalebar handles its own drawing completely
   } else if (obj.type === "text" && obj.text) {

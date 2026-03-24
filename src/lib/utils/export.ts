@@ -170,7 +170,7 @@ function exportSVG(
           const color = o.stroke || "#000";
           content = `<rect x="${o.x}" y="${o.y + o.height - barH}" width="${o.width}" height="${barH}" fill="${color}"${transform} />`;
           
-          if (o.showText !== false) {
+          if (o.labelPosition !== "none") {
              const label = `${o.physicalLength} ${o.units || "units"}`;
              const fSize = o.fontSize || 14;
              // Text centered above

@@ -5,7 +5,11 @@
   import Toolbox from "./Toolbox.svelte";
   import WelcomeScreen from "./WelcomeScreen.svelte";
   import AboutDialog from "./AboutDialog.svelte";
+  import ScaleBarPromptDialog from "./ScaleBarPromptDialog.svelte";
   import LayoutPresets from "./LayoutPresets.svelte";
+    import ReformatDialog from "./ReformatDialog.svelte";
+  import PresetManagerDialog from "./PresetManagerDialog.svelte";
+  import { loadCustomPresets, saveCustomPresets, type CustomPreset } from "../utils/presets";
   import type { CanvasObject, InteractionMode } from "../types";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { readFile, writeFile } from "@tauri-apps/plugin-fs";
@@ -50,6 +54,9 @@
   } | null>(null);
 
   // Interaction State
+  let isScaleBarPromptOpen = $state(false);
+  let scaleBarTargetImage = $state<CanvasObject | null>(null);
+
   let activeHandle: string | null = null;
   let hoveredHandle = $state<string | null>(null);
   let initialState: CanvasObject | null = null; // Snapshot for resize/rotate
@@ -298,19 +305,57 @@
   // ── Paper / Canvas Sizes ────────────────────────────────────────────────────
   // Sizes in pixels at 96 DPI (1 pt = 1px). For print output the export
   // pipeline uses its own DPI setting independently.
-  const PAPER_SIZES: { key: string; label: string; w: number; h: number }[] = [
+  const BUILT_IN_SIZES: {
+    key: string;
+    label: string;
+    w: number;
+    h: number;
+    minFontSizePt?: number;
+  }[] = [
     { key: "a4p", label: "A4 Portrait", w: 794, h: 1123 },
     { key: "a4l", label: "A4 Landscape", w: 1123, h: 794 },
     { key: "a3p", label: "A3 Portrait", w: 1123, h: 1587 },
     { key: "a3l", label: "A3 Landscape", w: 1587, h: 1123 },
     { key: "a0p", label: "A0 Poster (portrait)", w: 3179, h: 4494 },
     { key: "letter", label: "US Letter", w: 816, h: 1056 },
-    { key: "nature1", label: "Nature 1-col (89mm)", w: 337, h: 252 },
-    { key: "nature2", label: "Nature 2-col (183mm)", w: 693, h: 520 },
-    { key: "cell", label: "Cell full page", w: 708, h: 960 },
-    { key: "pnas", label: "PNAS full page", w: 693, h: 997 },
-    { key: "custom", label: "Custom…", w: 800, h: 600 },
+    { key: "nature1", label: "Nature 1-col (89mm)", w: 337, h: 252, minFontSizePt: 5 },
+    { key: "nature2", label: "Nature 2-col (183mm)", w: 693, h: 520, minFontSizePt: 5 },
+    { key: "cell", label: "Cell full page", w: 708, h: 960, minFontSizePt: 7 },
+    { key: "pnas", label: "PNAS full page", w: 693, h: 997, minFontSizePt: 7 },
   ];
+  
+  let customPresets = $state<CustomPreset[]>([]);
+  let PAPER_SIZES = $derived([
+    ...BUILT_IN_SIZES,
+    ...customPresets,
+    { key: "custom", label: "Custom…", w: 800, h: 600 }
+  ]);
+  
+  let showPresetManager = $state(false);
+
+  // Load custom presets on mount
+  onMount(async () => {
+    try {
+      customPresets = await loadCustomPresets();
+    } catch (e) {
+      console.error("Failed to load presets", e);
+    }
+  });
+
+  async function handleSavePresets(newPresets: CustomPreset[]) {
+    try {
+      await saveCustomPresets(newPresets);
+      customPresets = newPresets;
+      showPresetManager = false;
+      // If the currently selected preset was deleted, fall back to custom
+      if (paperKey !== 'custom' && !PAPER_SIZES.find(p => p.key === paperKey)) {
+        paperKey = 'custom';
+      }
+    } catch (err) {
+      alert("Failed to save custom presets.");
+    }
+  }
+
   let paperKey = $state("a4l");
   let paperW = $derived(PAPER_SIZES.find((p) => p.key === paperKey)?.w ?? 800);
   let paperH = $derived(PAPER_SIZES.find((p) => p.key === paperKey)?.h ?? 600);
@@ -321,6 +366,272 @@
   // Resolved paper dimensions
   let resolvedW = $derived(paperKey === "custom" ? customPaperW : paperW);
   let resolvedH = $derived(paperKey === "custom" ? customPaperH : paperH);
+
+  // ── Reformat Dialog ─────────────────────────────────────────────────────────
+  let showReformatDialog = $state(false);
+  let pendingPaperKey = $state("");
+  let reformatFromLabel = $state("");
+  let reformatToLabel = $state("");
+  let fontWarnings = $state<string[]>([]);
+
+  function requestPaperChange(newKey: string) {
+    if (newKey === paperKey) return;
+    if (objects.length === 0) {
+      paperKey = newKey;
+      tick().then(centerCanvas);
+      return;
+    }
+    reformatFromLabel =
+      PAPER_SIZES.find((p) => p.key === paperKey)?.label ?? paperKey;
+    reformatToLabel =
+      PAPER_SIZES.find((p) => p.key === newKey)?.label ?? newKey;
+    pendingPaperKey = newKey;
+    showReformatDialog = true;
+  }
+
+  function applyReformat() {
+    const oldW = resolvedW;
+    const oldH = resolvedH;
+    const newPreset = PAPER_SIZES.find((p) => p.key === pendingPaperKey);
+    if (!newPreset) return;
+    const newW = newPreset.w;
+    const newH = newPreset.h;
+    const sx = newW / oldW;
+    const sy = newH / oldH;
+    const minFont = newPreset.minFontSizePt;
+    const warnings: string[] = [];
+
+    objects = objects.map((obj) => {
+      const updated = { ...obj };
+      updated.x = Math.round(obj.x * sx);
+      updated.y = Math.round(obj.y * sy);
+
+      if (obj.type === "scalebar") {
+        updated.width = Math.round(obj.width * sx);
+        updated.height = Math.round(obj.height * sy);
+        if (obj.offsetX !== undefined) updated.offsetX = obj.offsetX * sx;
+        if (obj.offsetY !== undefined) updated.offsetY = obj.offsetY * sy;
+      } else if (obj.type === "line") {
+        updated.width = Math.round(obj.width * sx);
+        updated.height = Math.round(obj.height * sy);
+        if (obj.x2 !== undefined) updated.x2 = Math.round(obj.x2 * sx);
+        if (obj.y2 !== undefined) updated.y2 = Math.round(obj.y2 * sy);
+      } else {
+        updated.width = Math.round(obj.width * sx);
+        updated.height = Math.round(obj.height * sy);
+      }
+
+      if (obj.fontSize) {
+        const newFS = Math.max(1, Math.round(obj.fontSize * ((sx + sy) / 2)));
+        if (minFont && newFS < minFont) {
+          warnings.push(
+            `"${obj.text || obj.type}" (${obj.fontSize}pt -> ${newFS}pt, min ${minFont}pt)`,
+          );
+        }
+        updated.fontSize = newFS;
+      }
+
+      return updated;
+    });
+
+    paperKey = pendingPaperKey;
+    fontWarnings = warnings;
+    showReformatDialog = false;
+    saveHistory();
+    tick().then(centerCanvas);
+  }
+
+  function cancelReformat() {
+    showReformatDialog = false;
+    pendingPaperKey = "";
+  }
+
+  function applyReflow() {
+    const oldW = resolvedW;
+    const oldH = resolvedH;
+    const newPreset = PAPER_SIZES.find((p) => p.key === pendingPaperKey);
+    if (!newPreset) return;
+    const newW = newPreset.w;
+    const newH = newPreset.h;
+
+    if (objects.length === 0) {
+      paperKey = pendingPaperKey;
+      showReformatDialog = false;
+      tick().then(centerCanvas);
+      return;
+    }
+
+    // ── Step 1: Spatial-grid clustering ───────────────────────────────────
+    // Detects the existing column / row structure purely from object positions.
+    // Groups objects that overlap vertically into cohesive "Panels".
+
+    const anchors = objects.filter((o) => !o.parentId); // exclude linked decorations
+    if (anchors.length === 0) {
+      // Fallback: proportional scale
+      const sx2 = newW / oldW, sy2 = newH / oldH;
+      objects = objects.map((o) => ({
+        ...o,
+        x: Math.round(o.x * sx2), y: Math.round(o.y * sy2),
+        width: Math.round(o.width * sx2), height: Math.round(o.height * sy2),
+      }));
+      paperKey = pendingPaperKey;
+      showReformatDialog = false;
+      saveHistory();
+      tick().then(centerCanvas);
+      return;
+    }
+
+    // Sort by X position first to sweep left-to-right
+    const sortedByX = [...anchors].sort((a, b) => a.x - b.x);
+    
+    interface Panel {
+      id: string;
+      members: CanvasObject[];
+      bbox: { x: number; y: number; w: number; h: number };
+    }
+
+    const panels: Panel[] = [];
+
+    // Cluster objects that share horizontal space (overlap in X)
+    for (const obj of sortedByX) {
+      const objW = obj.width ?? 0;
+      const objH = obj.height ?? 0;
+      const objMid = obj.x + objW / 2;
+
+      // Find if this object belongs to an existing panel column
+      // We say it belongs if its horizontal center falls roughly within a panel's width
+      let assigned = false;
+      for (const p of panels) {
+        if (objMid >= p.bbox.x - 20 && objMid <= p.bbox.x + p.bbox.w + 20) {
+          p.members.push(obj);
+          p.bbox.x = Math.min(p.bbox.x, obj.x);
+          p.bbox.y = Math.min(p.bbox.y, obj.y);
+          p.bbox.w = Math.max(p.bbox.x + p.bbox.w, obj.x + objW) - p.bbox.x;
+          p.bbox.h = Math.max(p.bbox.y + p.bbox.h, obj.y + objH) - p.bbox.y;
+          assigned = true;
+          break;
+        }
+      }
+
+      if (!assigned) {
+        panels.push({
+          id: obj.id, // anchor id
+          members: [obj],
+          bbox: { x: obj.x, y: obj.y, w: objW, h: objH }
+        });
+      }
+    }
+
+    // Now sort panels by reading order (top-left)
+    panels.sort((a, b) => {
+      const rowDiff = Math.round(a.bbox.y / 40) - Math.round(b.bbox.y / 40);
+      return rowDiff !== 0 ? rowDiff : a.bbox.x - b.bbox.x;
+    });
+
+    // ── Step 2: Compute optimal column count for new canvas ───────────────
+    const N = panels.length;
+    const gutter = Math.round(newW * 0.04);
+    const marginX = Math.round(newW * 0.04);
+    const marginY = Math.round(newH * 0.04);
+    const newAR = newW / newH;
+
+    function scoreCols(c: number): number {
+      const r = Math.ceil(N / c);
+      const cw = (newW - marginX * 2 - gutter * (c - 1)) / c;
+      const ch = (newH - marginY * 2 - gutter * (r - 1)) / r;
+      if (cw <= 0 || ch <= 0) return Infinity;
+      return Math.abs(cw / ch - newAR);
+    }
+
+    // Try all reasonable column counts and pick the one that fits the new Aspect Ratio best
+    let cols = 1;
+    let minScore = Infinity;
+    for (let c = 1; c <= N; c++) {
+      const s = scoreCols(c);
+      if (s < minScore) {
+        minScore = s;
+        cols = c;
+      }
+    }
+
+    const rows = Math.ceil(N / cols);
+    const cellW = Math.round((newW - marginX * 2 - gutter * (cols - 1)) / cols);
+    const cellH = Math.round((newH - marginY * 2 - gutter * (rows - 1)) / rows);
+
+    // ── Step 3: Place Panels in new grid, compute per-panel transform ───
+    const reflowed = new Map<string, CanvasObject>();
+    const FILL = 0.95; // panel fills this fraction of its cell
+
+    panels.forEach((panel, idx) => {
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      const cellX = marginX + col * (cellW + gutter);
+      const cellY = marginY + row * (cellH + gutter);
+
+      const oldW2 = panel.bbox.w || 1;
+      const oldH2 = panel.bbox.h || 1;
+      
+      // Scale the whole panel to fit inside the cell
+      const scale = Math.min((cellW * FILL) / oldW2, (cellH * FILL) / oldH2);
+      const newPanelW = Math.round(oldW2 * scale);
+      const newPanelH = Math.round(oldH2 * scale);
+      
+      // Center the scaled panel exactly in the cell
+      const newPanelX = Math.round(cellX + (cellW - newPanelW) / 2);
+      const newPanelY = Math.round(cellY + (cellH - newPanelH) / 2);
+
+      // Reposition all members relative to the panel's bounding box top-left
+      for (const obj of panel.members) {
+        const relX = obj.x - panel.bbox.x;
+        const relY = obj.y - panel.bbox.y;
+        
+        const newObjX = Math.round(newPanelX + relX * scale);
+        const newObjY = Math.round(newPanelY + relY * scale);
+
+        reflowed.set(obj.id, {
+          ...obj,
+          x: newObjX, y: newObjY,
+          width: Math.round((obj.width ?? 0) * scale), 
+          height: Math.round((obj.height ?? 0) * scale),
+          fontSize: obj.fontSize ? Math.max(1, Math.round(obj.fontSize * scale)) : undefined,
+        });
+
+        // Reposition decorations linked to this specific object (scale bars, etc.)
+        for (const linked of objects.filter((o) => o.parentId === obj.id)) {
+          reflowed.set(linked.id, {
+            ...linked,
+            x: Math.round(newObjX + (linked.x - obj.x) * scale),
+            y: Math.round(newObjY + (linked.y - obj.y) * scale),
+            width: Math.round((linked.width ?? 0) * scale),
+            height: Math.round((linked.height ?? 0) * scale),
+            offsetX: linked.offsetX !== undefined ? linked.offsetX * scale : undefined,
+            offsetY: linked.offsetY !== undefined ? linked.offsetY * scale : undefined,
+            fontSize: linked.fontSize ? Math.max(1, Math.round(linked.fontSize * scale)) : undefined,
+          });
+        }
+      }
+    });
+
+    // ── Step 4: Proportionally reposition anything not covered ────────────
+    const sx = newW / oldW, sy = newH / oldH;
+    for (const obj of objects) {
+      if (!reflowed.has(obj.id)) {
+        reflowed.set(obj.id, {
+          ...obj,
+          x: Math.round(obj.x * sx), y: Math.round(obj.y * sy),
+          width: Math.round((obj.width ?? 0) * sx), height: Math.round((obj.height ?? 0) * sy),
+          fontSize: obj.fontSize ? Math.max(1, Math.round(obj.fontSize * sx)) : undefined,
+        });
+      }
+    }
+
+    objects = objects.map((o) => reflowed.get(o.id) ?? o);
+    paperKey = pendingPaperKey;
+    showReformatDialog = false;
+    fontWarnings = [];
+    saveHistory();
+    tick().then(centerCanvas);
+  }
 
   // Global Font Defaults
   let defaultFontFamily = $state("Arial");
@@ -417,7 +728,6 @@
       ...defaultToolStyle,
       stroke: "#000000",
       strokeWidth: 4,
-      showText: true,
     } as any,
   });
 
@@ -628,8 +938,70 @@
     offset.y = (containerHeight - resolvedH * zoom) / 2 + RULER_SIZE;
   }
 
+  function updateScaleBars() {
+    for (const obj of objects) {
+      if (obj.type === "scalebar" && obj.parentId) {
+        const parent = objects.find((o) => o.id === obj.parentId);
+        if (parent && parent.type === "image") {
+          const natW = parent.naturalWidth || parent.width;
+          const natH = parent.naturalHeight || parent.height;
+          const scaleFactor = parent.width / natW;
+
+          let newW = obj.width;
+          let newOffsetX =
+            obj.offsetX ?? natW - obj.physicalLength! / obj.pixelSize! - 10;
+          let newOffsetY = obj.offsetY ?? natH - 30;
+
+          if (obj.physicalLength && obj.pixelSize && natW > 0) {
+            newW = (obj.physicalLength / obj.pixelSize) * scaleFactor;
+          }
+
+          if (obj.presetPosition && obj.presetPosition !== "custom") {
+            const w = newW / scaleFactor;
+            const h = 30; // Approx height for text + bar
+            const margin = 15;
+
+            if (obj.presetPosition.includes("top")) newOffsetY = margin;
+            if (obj.presetPosition.includes("bottom"))
+              newOffsetY = natH - h - margin;
+            if (
+              obj.presetPosition === "center" ||
+              obj.presetPosition === "center-left" ||
+              obj.presetPosition === "center-right"
+            )
+              newOffsetY = (natH - h) / 2;
+
+            if (obj.presetPosition.includes("left")) newOffsetX = margin;
+            if (obj.presetPosition.includes("right"))
+              newOffsetX = natW - w - margin;
+            if (
+              obj.presetPosition === "top-center" ||
+              obj.presetPosition === "bottom-center" ||
+              obj.presetPosition === "center"
+            )
+              newOffsetX = (natW - w) / 2;
+          }
+
+          const newX = parent.x + newOffsetX * scaleFactor;
+          const newY = parent.y + newOffsetY * scaleFactor;
+
+          if (Math.abs(obj.x - newX) > 0.001) obj.x = newX;
+          if (Math.abs(obj.y - newY) > 0.001) obj.y = newY;
+          if (Math.abs(obj.width - newW) > 0.001) obj.width = newW;
+          if (Math.abs((obj.offsetX || 0) - newOffsetX) > 0.001)
+            obj.offsetX = newOffsetX;
+          if (Math.abs((obj.offsetY || 0) - newOffsetY) > 0.001)
+            obj.offsetY = newOffsetY;
+        }
+      }
+    }
+  }
+
   function render() {
     if (!ctx || !canvas) return;
+
+    // Sync scale bars before drawing
+    updateScaleBars();
 
     // Clear visible area
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1206,6 +1578,54 @@
     saveHistory();
   }
 
+  function onScaleBarConfirm(
+    physicalLength: number,
+    pixelSize: number,
+    units: string,
+  ) {
+    if (!scaleBarTargetImage) return;
+
+    const pw = physicalLength / pixelSize;
+    const newScaleBar: CanvasObject = {
+      id: crypto.randomUUID(),
+      type: "scalebar",
+      x: scaleBarTargetImage.x + scaleBarTargetImage.width - pw - 10,
+      y: scaleBarTargetImage.y + scaleBarTargetImage.height - 20,
+      width: pw,
+      height: 10,
+      physicalLength,
+      pixelSize,
+      units,
+      labelPosition: "below",
+      backgroundColor: "transparent",
+      backgroundOpacity: 1.0,
+      presetPosition: "bottom-right",
+      parentId: scaleBarTargetImage.id,
+      offsetX: scaleBarTargetImage.width - pw - 10,
+      offsetY: scaleBarTargetImage.height - 20,
+      fill: defaultFillColor,
+      stroke: defaultStrokeColor,
+      strokeWidth: defaultStrokeWidth,
+      fontFamily: defaultFontFamily,
+      fontSize: 14,
+    };
+
+    objects.push(newScaleBar);
+    selectedIds.clear();
+    selectedIds.add(newScaleBar.id);
+    saveHistory();
+
+    isScaleBarPromptOpen = false;
+    scaleBarTargetImage = null;
+    mode = "select";
+  }
+
+  function onScaleBarCancel() {
+    isScaleBarPromptOpen = false;
+    scaleBarTargetImage = null;
+    mode = "select";
+  }
+
   async function importImage() {
     try {
       if (isTauri()) {
@@ -1777,6 +2197,18 @@
 
     // 2. Select / Move (Left click, no pan active)
     if (event.button === 0 && !isSpacePressed && !isPanToolActive) {
+      if (mode === "draw_scalebar") {
+        const hitId = hitTest(worldPos.x, worldPos.y);
+        if (hitId) {
+          const targetObj = objects.find((o) => o.id === hitId);
+          if (targetObj && targetObj.type === "image") {
+            scaleBarTargetImage = targetObj;
+            isScaleBarPromptOpen = true;
+          }
+        }
+        return;
+      }
+
       if (mode === "draw_text") {
         textInput = {
           visible: true,
@@ -1833,15 +2265,13 @@
       if (
         mode === "draw_rectangle" ||
         mode === "draw_ellipse" ||
-        mode === "draw_line" ||
-        mode === "draw_scalebar"
+        mode === "draw_line"
       ) {
         // Start drawing
         isDragging = true;
         dragStart = { x: worldPos.x, y: worldPos.y };
 
         const toolStyle = toolStyles[mode] || {};
-        const isScaleBar = mode === "draw_scalebar";
 
         pendingObject = {
           id: crypto.randomUUID(),
@@ -1850,12 +2280,10 @@
               ? "rectangle"
               : mode === "draw_ellipse"
                 ? "ellipse"
-                : isScaleBar
-                  ? "scalebar"
-                  : "line",
+                : "line",
           x: worldPos.x,
           y: worldPos.y,
-          // For Rect/Ellipse/ScaleBar
+          // For Rect/Ellipse
           width: 0,
           height: 0,
           // For Line
@@ -1864,17 +2292,8 @@
           arrowEnd: mode === "draw_line", // Auto-add arrow to end for now
 
           fill: toolStyle.fill || defaultFillColor,
-          stroke: isScaleBar
-            ? "#000000"
-            : toolStyle.stroke || defaultStrokeColor,
-          strokeWidth: isScaleBar
-            ? 4
-            : toolStyle.strokeWidth || defaultStrokeWidth,
-
-          // ScaleBar Props
-          physicalLength: 10,
-          units: "µm",
-          showText: true,
+          stroke: toolStyle.stroke || defaultStrokeColor,
+          strokeWidth: toolStyle.strokeWidth || defaultStrokeWidth,
         };
         // Deselect others while drawing
         selectedIds.clear();
@@ -2586,6 +3005,32 @@
     }
   }
 
+  function applyStyleToAllScaleBars(sourceObj: CanvasObject) {
+    if (sourceObj.type !== "scalebar") return;
+
+    const propsToSync = {
+      labelPosition: sourceObj.labelPosition,
+      backgroundColor: sourceObj.backgroundColor,
+      backgroundOpacity: sourceObj.backgroundOpacity,
+      fill: sourceObj.fill,
+      stroke: sourceObj.stroke,
+      strokeWidth: sourceObj.strokeWidth,
+      fontFamily: sourceObj.fontFamily,
+      fontSize: sourceObj.fontSize,
+      fontWeight: sourceObj.fontWeight,
+      fontStyle: sourceObj.fontStyle,
+    };
+
+    let changed = false;
+    for (const obj of objects) {
+      if (obj.type === "scalebar" && obj.id !== sourceObj.id) {
+        Object.assign(obj, propsToSync);
+        changed = true;
+      }
+    }
+    if (changed) saveHistory();
+  }
+
   function handleDoubleClick(e: MouseEvent) {
     if (mode !== "select") return;
 
@@ -2792,6 +3237,17 @@
             if (init) {
               obj.x = init.x + finalDx;
               obj.y = init.y + finalDy;
+
+              if (obj.type === "scalebar" && obj.parentId) {
+                obj.presetPosition = "custom";
+                const parent = objects.find((o) => o.id === obj.parentId);
+                if (parent) {
+                  const scaleFactor =
+                    parent.width / (parent.naturalWidth || parent.width);
+                  obj.offsetX = (obj.x - parent.x) / scaleFactor;
+                  obj.offsetY = (obj.y - parent.y) / scaleFactor;
+                }
+              }
 
               if (
                 obj.type === "line" &&
@@ -3012,31 +3468,16 @@
           render(); // Show selection rectangle while dragging
         }
       } else if (
-        (mode === "draw_rectangle" ||
-          mode === "draw_ellipse" ||
-          mode === "draw_scalebar") &&
+        (mode === "draw_rectangle" || mode === "draw_ellipse") &&
         pendingObject
       ) {
         const currentWorld = screenToWorld(e.clientX, e.clientY);
         // Allow drawing in any direction
 
-        if (mode === "draw_scalebar") {
-          // Scale bar is always horizontal for drawing logic
-          pendingObject.width = Math.max(
-            20,
-            Math.abs(currentWorld.x - dragStart.x),
-          );
-          pendingObject.height = 30; // Sufficient for text + bar
-          // x handles direction
-          pendingObject.x =
-            currentWorld.x < dragStart.x ? currentWorld.x : dragStart.x;
-          pendingObject.y = dragStart.y; // Keep Y stable
-        } else {
-          pendingObject.x = Math.min(dragStart.x, currentWorld.x);
-          pendingObject.y = Math.min(dragStart.y, currentWorld.y);
-          pendingObject.width = Math.abs(currentWorld.x - dragStart.x);
-          pendingObject.height = Math.abs(currentWorld.y - dragStart.y);
-        }
+        pendingObject.x = Math.min(dragStart.x, currentWorld.x);
+        pendingObject.y = Math.min(dragStart.y, currentWorld.y);
+        pendingObject.width = Math.abs(currentWorld.x - dragStart.x);
+        pendingObject.height = Math.abs(currentWorld.y - dragStart.y);
       } else if (mode === "draw_line" && pendingObject) {
         const currentWorld = screenToWorld(e.clientX, e.clientY);
         pendingObject.x2 = currentWorld.x;
@@ -3079,8 +3520,7 @@
     } else if (
       (mode === "draw_rectangle" ||
         mode === "draw_ellipse" ||
-        mode === "draw_line" ||
-        mode === "draw_scalebar") &&
+        mode === "draw_line") &&
       pendingObject
     ) {
       // Finalize drawing
@@ -3725,15 +4165,23 @@
         <select
           value={paperKey}
           onchange={(e) => {
-            paperKey = e.currentTarget.value;
-            tick().then(() => centerCanvas());
-          }}
+          const val = e.currentTarget.value;
+          if (val === "manage-presets") {
+            // Revert the select visually back to the actual current selected key
+            e.currentTarget.value = paperKey;
+            showPresetManager = true;
+          } else {
+            requestPaperChange(val);
+          }
+        }}
           class="paper-select"
           title="Paper size"
         >
           {#each PAPER_SIZES as ps}
             <option value={ps.key}>{ps.label}</option>
           {/each}
+          <option disabled>──────────</option>
+          <option value="manage-presets">Manage Custom Presets...</option>
         </select>
         {#if paperKey === "custom"}
           <input
@@ -3895,9 +4343,35 @@
       />
     {/if}
 
-    <!-- About Dialog -->
     <AboutDialog bind:show={showAboutDialog} />
 
+    <ScaleBarPromptDialog
+      isOpen={isScaleBarPromptOpen}
+      imageWidth={scaleBarTargetImage ? scaleBarTargetImage.width : 0}
+      onConfirm={onScaleBarConfirm}
+      onCancel={onScaleBarCancel}
+    />
+
+    <ReformatDialog
+      isOpen={showReformatDialog}
+      fromLabel={reformatFromLabel}
+      toLabel={reformatToLabel}
+      onScale={applyReformat}
+      onReflow={applyReflow}
+      onCancel={cancelReformat}
+    />
+
+    {#if fontWarnings.length > 0}
+      <div class="font-warnings-toast">
+        <strong>⚠ Font size warnings:</strong>
+        <ul>
+          {#each fontWarnings as w}
+            <li>{w}</li>
+          {/each}
+        </ul>
+        <button onclick={() => (fontWarnings = [])}>Dismiss</button>
+      </div>
+    {/if}
     <!--
         Canvas fills the remaining area
     -->
@@ -3928,8 +4402,16 @@
     ></canvas>
 
     <!-- Context Menu -->
-    {#if contextMenu}
+    <PresetManagerDialog
+    isOpen={showPresetManager}
+    presets={customPresets}
+    onSave={handleSavePresets}
+    onCancel={() => (showPresetManager = false)}
+  />
+
+  {#if contextMenu}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div
         class="ctx-backdrop"
         onclick={closeContextMenu}
@@ -4567,6 +5049,7 @@
     bind:defaultFontStyle
     {applyStyleToSelected}
     {applyFontToSelected}
+    {applyStyleToAllScaleBars}
     {resetLabelSequence}
     onStyleChange={(prop, val) => {
       // Intercept changes from PropertiesPanel to update Tool Styles
@@ -4661,6 +5144,40 @@
     background: rgba(90, 171, 255, 0.12);
     color: #7fc0ff;
     border-color: rgba(90, 171, 255, 0.3);
+  }
+
+  /* Font warnings toast (shown after journal reformat) */
+  .font-warnings-toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 8000;
+    background: #2a1a0a;
+    border: 1px solid #8a4a00;
+    border-radius: 10px;
+    padding: 14px 18px;
+    color: #f0b060;
+    font-size: 12px;
+    max-width: 340px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  }
+  .font-warnings-toast ul {
+    margin: 6px 0 10px 14px;
+    padding: 0;
+    font-size: 11px;
+    color: #d09050;
+  }
+  .font-warnings-toast button {
+    background: #3a2a0a;
+    border: 1px solid #6a3a00;
+    color: #f0b060;
+    border-radius: 5px;
+    padding: 3px 10px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .font-warnings-toast button:hover {
+    background: #4a3a0a;
   }
 
   /* Paper size picker */

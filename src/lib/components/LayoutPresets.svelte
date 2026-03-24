@@ -166,7 +166,7 @@
       dash: [4, 4],
       rotation: 0,
       label: String.fromCharCode(65 + i), // A, B, C…
-      labelPosition: "top-left",
+      labelPosition: "top-left" as any,
     }));
     onApply(newObjects);
   }

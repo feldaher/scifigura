@@ -19,6 +19,7 @@
     // Action Handlers
     applyStyleToSelected,
     applyFontToSelected,
+    applyStyleToAllScaleBars,
     resetLabelSequence,
     onStyleChange,
   }: {
@@ -41,6 +42,7 @@
 
     applyStyleToSelected: (prop: any, val: any) => void;
     applyFontToSelected: (prop: any, val: any) => void;
+    applyStyleToAllScaleBars?: (source: CanvasObject) => void;
     resetLabelSequence?: () => void;
 
     // Optional callback for tracking style changes (for tool persistence)
@@ -472,33 +474,103 @@
                 type="number"
                 value={obj.physicalLength}
                 oninput={(e) =>
-                  update("physicalLength", +e.currentTarget.value)}
+                  updateObject(obj.id, {
+                    physicalLength: +e.currentTarget.value,
+                  })}
                 class="flex-1"
               />
               <input
                 type="text"
                 value={obj.units}
-                oninput={(e) => {
-                  updateObject(obj.id, { units: e.currentTarget.value });
-                  onStyleChange?.("units", e.currentTarget.value);
-                }}
+                oninput={(e) =>
+                  updateObject(obj.id, { units: e.currentTarget.value })}
                 class="flex-1"
                 placeholder="units"
               />
             </div>
           </label>
 
+          <label>
+            <span>Label Position</span>
+            <select
+              value={obj.labelPosition || "above"}
+              onchange={(e) =>
+                updateObject(obj.id, {
+                  labelPosition: e.currentTarget.value as any,
+                })}
+            >
+              <option value="above">Above</option>
+              <option value="below">Below</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+
           <label class="row items-center gap-2">
             <input
               type="checkbox"
-              checked={obj.showText !== false}
-              onchange={(e) => {
-                updateObject(obj.id, { showText: e.currentTarget.checked });
-                onStyleChange?.("showText", e.currentTarget.checked);
-              }}
+              checked={!!obj.backgroundColor &&
+                obj.backgroundColor !== "transparent"}
+              onchange={(e) =>
+                updateObject(obj.id, {
+                  backgroundColor: e.currentTarget.checked
+                    ? "#ffffff"
+                    : "transparent",
+                })}
             />
-            <span>Show Label</span>
+            <span>Background Box</span>
           </label>
+
+          {#if obj.backgroundColor && obj.backgroundColor !== "transparent"}
+            <div class="row items-center ml-4">
+              <input
+                type="color"
+                value={obj.backgroundColor}
+                oninput={(e) =>
+                  updateObject(obj.id, {
+                    backgroundColor: e.currentTarget.value,
+                  })}
+              />
+              <input
+                type="range"
+                min="0.1"
+                max="1"
+                step="0.1"
+                value={obj.backgroundOpacity ?? 1}
+                oninput={(e) =>
+                  updateObject(obj.id, {
+                    backgroundOpacity: parseFloat(e.currentTarget.value),
+                  })}
+                style="width: 60px; margin-left:8px;"
+              />
+            </div>
+          {/if}
+
+          <!-- Snap Presets -->
+          {#if obj.parentId}
+            <div class="preset-grid-wrapper mt-2">
+              <span style="font-size: 11px; color: #888;">Position Preset</span>
+              <div class="snap-grid mt-1">
+                {#each ["top-left", "top-center", "top-right", "center-left", "center", "center-right", "bottom-left", "bottom-center", "bottom-right"] as pos}
+                  <button
+                    class="snap-btn"
+                    class:active={obj.presetPosition === pos}
+                    onclick={() =>
+                      updateObject(obj.id, { presetPosition: pos })}
+                    title={pos}
+                  ></button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
+          {#if applyStyleToAllScaleBars}
+            <button
+              class="btn-action mt-2"
+              onclick={() => applyStyleToAllScaleBars(obj)}
+            >
+              Apply style to all Scale Bars
+            </button>
+          {/if}
         </div>
       </div>
     {/if}
@@ -632,8 +704,30 @@
   }
   .reset-btn:hover {
     background: #333;
-    color: #aaa;
+    color: #eee;
     border-color: #555;
+  }
+
+  .snap-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2px;
+    width: 60px;
+  }
+  .snap-btn {
+    width: 18px;
+    height: 18px;
+    background: #333;
+    border: 1px solid #444;
+    cursor: pointer;
+    border-radius: 2px;
+  }
+  .snap-btn:hover {
+    background: #555;
+  }
+  .snap-btn.active {
+    background: #5aabff;
+    border-color: #5aabff;
   }
 
   .content {
