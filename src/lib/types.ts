@@ -82,3 +82,10 @@ export type InteractionMode =
   | "draw_label"
   | "draw_scalebar"
   | "rotate";
+
+export interface ValidationIssue {
+  id: string;
+  objectId: string;
+  type: "error" | "warning";
+  message: string;
+}

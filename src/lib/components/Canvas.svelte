@@ -9,8 +9,9 @@
   import LayoutPresets from "./LayoutPresets.svelte";
     import ReformatDialog from "./ReformatDialog.svelte";
   import PresetManagerDialog from "./PresetManagerDialog.svelte";
+  import ValidationPanel from "./ValidationPanel.svelte";
   import { loadCustomPresets, saveCustomPresets, type CustomPreset } from "../utils/presets";
-  import type { CanvasObject, InteractionMode } from "../types";
+  import type { CanvasObject, InteractionMode, ValidationIssue } from "../types";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { readFile, writeFile, writeTextFile, readTextFile, exists, remove, BaseDirectory } from "@tauri-apps/plugin-fs";
   import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
@@ -405,6 +406,61 @@
   // Resolved paper dimensions
   let resolvedW = $derived(paperKey === "custom" ? customPaperW : paperW);
   let resolvedH = $derived(paperKey === "custom" ? customPaperH : paperH);
+
+  // Real-time journal constraints checker
+  let validationIssues = $derived.by(() => {
+    const issues: ValidationIssue[] = [];
+    const preset = PAPER_SIZES.find(p => p.key === paperKey);
+    const minFontSize = preset?.minFontSizePt || 0;
+    
+    for (const obj of objects) {
+      if (obj.type === "group" || obj.type === "scalebar") continue;
+
+      let outOfBounds = false;
+      if (obj.type === "line" && obj.x2 !== undefined && obj.y2 !== undefined) {
+          const minX = Math.min(obj.x, obj.x2);
+          const maxX = Math.max(obj.x, obj.x2);
+          const minY = Math.min(obj.y, obj.y2);
+          const maxY = Math.max(obj.y, obj.y2);
+          if (minX < 0 || maxX > resolvedW || minY < 0 || maxY > resolvedH) outOfBounds = true;
+      } else {
+          if (obj.x < 0 || obj.y < 0 || obj.x + obj.width > resolvedW || obj.y + obj.height > resolvedH) outOfBounds = true;
+      }
+      
+      if (outOfBounds) {
+        issues.push({ id: crypto.randomUUID(), objectId: obj.id, type: "warning", message: `Object extends outside Canvas margins.` });
+      }
+
+      if ((obj.type === "text" || obj.type === "label") && minFontSize > 0) {
+        if ((obj.fontSize || 0) < minFontSize) {
+          issues.push({ id: crypto.randomUUID(), objectId: obj.id, type: "error", message: `Text size (${obj.fontSize}pt) is below preset minimum (${minFontSize}pt).` });
+        }
+      }
+
+      if (obj.type === "image" && obj.naturalWidth && obj.width > 0) {
+        const effectiveDpi = (obj.naturalWidth / obj.width) * 72;
+        if (effectiveDpi && effectiveDpi < 300) {
+          issues.push({ id: crypto.randomUUID(), objectId: obj.id, type: "warning", message: `Image degraded. Effective resolution (~${Math.round(effectiveDpi)} DPI) is below 300 DPI standard.` });
+        }
+      }
+    }
+    return issues;
+  });
+
+  function handleValidationSelect(objectId: string) {
+    selectedIds.clear();
+    selectedIds.add(objectId);
+    selectedIds = new Set(selectedIds);
+    // Pan to the selected object
+    const obj = objects.find(o => o.id === objectId);
+    if (obj) {
+      const b = getObjectBounds(obj);
+      offset = {
+        x: (window.innerWidth / 2) / zoom - (b.x + b.w / 2),
+        y: (window.innerHeight / 2) / zoom - (b.y + b.h / 2),
+      };
+    }
+  }
 
   // ── Reformat Dialog ─────────────────────────────────────────────────────────
   let showReformatDialog = $state(false);
@@ -5142,6 +5198,8 @@
       updateToolStyle(prop as any, val);
     }}
   />
+
+  <ValidationPanel issues={validationIssues} onSelect={handleValidationSelect} />
 </div>
 
 <style>
