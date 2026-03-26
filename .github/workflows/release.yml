@@ -63,13 +63,47 @@ jobs:
             librsvg2-dev \
             patchelf
 
+      # ── macOS: import Developer ID Application signing certificate ────────────
+      # Required repo secrets:
+      #   APPLE_CERTIFICATE          – base64-encoded .p12 (Developer ID Application cert)
+      #                                  Export from Keychain Access, then:
+      #                                  base64 -i cert.p12 | pbcopy
+      #   APPLE_CERTIFICATE_PASSWORD – password used when exporting the .p12
+      #   KEYCHAIN_PASSWORD          – any random string (used only for the temp keychain)
+      - name: Import macOS signing certificate
+        if: matrix.os == 'macos-latest' && env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import /tmp/cert.p12 \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
       # ── Build & Release ───────────────────────────────────────────────────────
+      # Additional macOS notarization secrets (set these too once signing is ready):
+      #   APPLE_SIGNING_IDENTITY – "Developer ID Application: Your Name (TEAMID)"
+      #   APPLE_ID               – your Apple ID / developer email
+      #   APPLE_PASSWORD         – app-specific password from appleid.apple.com
+      #   APPLE_TEAM_ID          – 10-character Team ID from developer.apple.com
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS signing + notarization (only active when secrets are set)
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "SciFigura ${{ github.ref_name }}"
