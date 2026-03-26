@@ -195,12 +195,13 @@
 <style>
   .toolbox {
     width: 50px;
+    box-sizing: border-box;
     background: #252525;
     display: flex;
     flex-direction: column;
     align-items: center;
     padding: 10px 0;
-    gap: 6px;
+    gap: 4px;
     border-right: 1px solid #1a1a1a;
     flex-shrink: 0;
     z-index: 10;
@@ -254,6 +255,6 @@
     width: 28px;
     height: 1px;
     background: #333;
-    margin: 4px 0;
+    margin: 2px 0;
   }
 </style>
