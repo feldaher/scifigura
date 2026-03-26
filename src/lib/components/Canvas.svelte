@@ -1785,6 +1785,14 @@
           file.name.toLowerCase().endsWith(".svg")
         ) {
           const text = await file.text();
+          
+          const match = text.match(/data-scifigura="([^"]+)"/);
+          if (match) {
+            importSciFiguraObjects(match[1]);
+            input.value = "";
+            return;
+          }
+          
           objectUrl = await renderSvgToDataUrl(text);
         } else if (file.type.startsWith("image/")) {
           objectUrl = URL.createObjectURL(file);
@@ -1829,6 +1837,54 @@
     }
   }
 
+  function importSciFiguraObjects(escapedJson: string) {
+    try {
+      const jsonStr = escapedJson.replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+      const importedObjects: CanvasObject[] = JSON.parse(jsonStr);
+      
+      if (!Array.isArray(importedObjects)) return;
+
+      let minX = Infinity;
+      let minY = Infinity;
+      importedObjects.forEach(o => {
+          minX = Math.min(minX, o.x);
+          minY = Math.min(minY, o.y);
+      });
+      
+      const targetX = (lastMousePos.x - offset.x) / zoom;
+      const targetY = (lastMousePos.y - offset.y) / zoom;
+      const dx = isFinite(minX) ? targetX - minX : 0;
+      const dy = isFinite(minY) ? targetY - minY : 0;
+
+      const newIds = new Set<string>();
+      const idMap = new Map<string, string>();
+      
+      importedObjects.forEach(o => {
+          const newId = crypto.randomUUID();
+          idMap.set(o.id, newId);
+          o.id = newId;
+          o.x += dx;
+          o.y += dy;
+          if (o.x2 !== undefined) o.x2 += dx;
+          if (o.y2 !== undefined) o.y2 += dy;
+          newIds.add(newId);
+          objects.push(o);
+      });
+      
+      importedObjects.forEach(o => {
+          if (o.parentId && idMap.has(o.parentId)) {
+              o.parentId = idMap.get(o.parentId);
+          }
+      });
+
+      selectedIds = newIds;
+      saveHistory();
+      hasStarted = true;
+    } catch (e) {
+      console.error("Failed to parse embedded SciFigura objects:", e);
+    }
+  }
+
   async function addImageToCanvas(path: string) {
     console.log("Adding image from path:", path);
     let assetUrl = path;
@@ -1844,6 +1900,13 @@
           assetUrl = await renderPdfPageToDataUrl(bytes.buffer);
         } else if (lcPath.endsWith(".svg")) {
           const text = new TextDecoder().decode(bytes);
+          
+          const match = text.match(/data-scifigura="([^"]+)"/);
+          if (match) {
+            importSciFiguraObjects(match[1]);
+            return;
+          }
+          
           assetUrl = await renderSvgToDataUrl(text);
         } else {
           const blob = new Blob([bytes]);

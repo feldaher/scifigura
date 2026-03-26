@@ -150,7 +150,11 @@ function exportSVG(
 ): Blob {
     const { minX, minY, width, height } = bounds;
     
-    let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${width} ${height}" width="${width}" height="${height}">\n`;
+    // Embed the raw canvas state so this SVG can be re-imported dynamically as editable shapes
+    const stateJson = JSON.stringify(objects);
+    const escapedJson = stateJson.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    
+    let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" data-scifigura="${escapedJson}" viewBox="${minX} ${minY} ${width} ${height}" width="${width}" height="${height}">\n`;
 
     // Recursive SVG generator
     const objToSVG = (o: CanvasObject): string => {
