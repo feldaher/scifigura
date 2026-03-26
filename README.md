@@ -7,6 +7,8 @@
 
 Free, open-source desktop application for creating publication-ready scientific figures.
 
+📖 **[Quick-Start Guide](docs/quickstart.md)** — get from install to a complete 4-panel figure in minutes.
+
 ## Overview
 
 Scientific Figure Studio addresses critical pain points in scientific publishing:
