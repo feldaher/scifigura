@@ -1,6 +1,18 @@
+export interface PathNode {
+  id: string;
+  x: number;
+  y: number;
+  // Control points for cubic curves (in absolute canvas coordinates)
+  cp1x?: number;
+  cp1y?: number;
+  cp2x?: number;
+  cp2y?: number;
+  type: "smooth" | "corner" | "asymmetric";
+}
+
 export interface CanvasObject {
   id: string;
-  type: "rectangle" | "ellipse" | "line" | "text" | "group" | "label" | "scalebar" | "image";
+  type: "rectangle" | "ellipse" | "line" | "text" | "group" | "label" | "scalebar" | "image" | "path";
   x: number;
   y: number;
   width: number;
@@ -65,6 +77,10 @@ export interface CanvasObject {
   strokeWidth?: number;
   lineDash?: number[]; // For dashed lines: [] = solid, [5,5] = dashed, etc.
 
+  // For paths
+  pathNodes?: PathNode[];
+  closed?: boolean;
+
   // Transformations
   rotation?: number; // In radians
 }
@@ -81,6 +97,8 @@ export type InteractionMode =
   | "draw_text"
   | "draw_label"
   | "draw_scalebar"
+  | "draw_path"
+  | "edit_nodes"
   | "rotate";
 
 export interface ValidationIssue {

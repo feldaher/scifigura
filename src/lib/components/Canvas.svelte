@@ -62,7 +62,7 @@
   let hoveredHandle = $state<string | null>(null);
   let initialState: CanvasObject | null = null; // Snapshot for resize/rotate
   let selectionSnapshot = $state(
-    new Map<string, { x: number; y: number; x2?: number; y2?: number }>(),
+    new Map<string, { x: number; y: number; width?: number; height?: number; x2?: number; y2?: number; pathNodes?: any[] }>(),
   );
   let activeGuides = $state<SnapGuide[]>([]); // Visual guides for snapping
 
@@ -1270,6 +1270,49 @@
                 ctx.restore();
               }
             }
+          } else if (obj.type === "path" && (mode === "edit_nodes" || (mode === "draw_path" && obj.id === pendingObject?.id)) && obj.pathNodes) {
+            // Draw Path Nodes and Control Arms (for edit and draw preview)
+            ctx.save();
+            const handleSize = 6 / zoom;
+            
+            obj.pathNodes.forEach((node) => {
+                ctx.strokeStyle = "#888";
+                ctx.lineWidth = 1 / zoom;
+                
+                if (node.cp1x !== undefined && node.cp1y !== undefined) {
+                    ctx.beginPath();
+                    ctx.moveTo(node.x, node.y);
+                    ctx.lineTo(node.cp1x, node.cp1y);
+                    ctx.stroke();
+                    
+                    ctx.beginPath();
+                    ctx.arc(node.cp1x, node.cp1y, handleSize / 1.5, 0, Math.PI * 2);
+                    ctx.fillStyle = "#fff";
+                    ctx.strokeStyle = "#2196f3";
+                    ctx.fill();
+                    ctx.stroke();
+                }
+                
+                if (node.cp2x !== undefined && node.cp2y !== undefined) {
+                    ctx.beginPath();
+                    ctx.moveTo(node.x, node.y);
+                    ctx.lineTo(node.cp2x, node.cp2y);
+                    ctx.stroke();
+                    
+                    ctx.beginPath();
+                    ctx.arc(node.cp2x, node.cp2y, handleSize / 1.5, 0, Math.PI * 2);
+                    ctx.fillStyle = "#fff";
+                    ctx.strokeStyle = "#2196f3";
+                    ctx.fill();
+                    ctx.stroke();
+                }
+                
+                ctx.fillStyle = "#fff";
+                ctx.strokeStyle = "#2196f3";
+                ctx.fillRect(node.x - handleSize/2, node.y - handleSize/2, handleSize, handleSize);
+                ctx.strokeRect(node.x - handleSize/2, node.y - handleSize/2, handleSize, handleSize);
+            });
+            ctx.restore();
           } else {
             // Standard Single Selection Overlay (Resize/Rotate)
             // Calculate center
@@ -1288,7 +1331,6 @@
             ctx.rotate(obj.rotation || 0);
             ctx.translate(-cx, -cy);
 
-            // Draw bounding box (local space)
             let bx = obj.x,
               by = obj.y,
               bw = obj.width,
@@ -1303,6 +1345,11 @@
               by = Math.min(obj.y, obj.y2);
               bw = Math.abs(obj.x - obj.x2);
               bh = Math.abs(obj.y - obj.y2);
+            } else if (obj.type === "path" && obj.pathNodes && obj.pathNodes.length > 0) {
+              bx = Math.min(...obj.pathNodes.map(n => n.x));
+              by = Math.min(...obj.pathNodes.map(n => n.y));
+              bw = Math.max(...obj.pathNodes.map(n => n.x)) - bx;
+              bh = Math.max(...obj.pathNodes.map(n => n.y)) - by;
             }
             ctx.strokeRect(bx, by, bw, bh);
 
@@ -2246,6 +2293,17 @@
           const dist = Math.sqrt((P.x - proj.x) ** 2 + (P.y - proj.y) ** 2);
           isHit = dist <= HIT_TOLERANCE;
         }
+      } else if (obj.type === "path" && obj.pathNodes && obj.pathNodes.length > 0) {
+        // Bounding box hit test based on path nodes and control arms
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const node of obj.pathNodes) {
+          minX = Math.min(minX, node.x, node.cp1x ?? node.x, node.cp2x ?? node.x);
+          minY = Math.min(minY, node.y, node.cp1y ?? node.y, node.cp2y ?? node.y);
+          maxX = Math.max(maxX, node.x, node.cp1x ?? node.x, node.cp2x ?? node.x);
+          maxY = Math.max(maxY, node.y, node.cp1y ?? node.y, node.cp2y ?? node.y);
+        }
+        const padding = 10 / zoom; // Generous hit area for thin lines
+        isHit = x >= minX - padding && x <= maxX + padding && y >= minY - padding && y <= maxY + padding;
       } else {
         // Shape Hit Test
         isHit =
@@ -2428,6 +2486,51 @@
         return;
       }
 
+      if (mode === "draw_path") {
+        if (!pendingObject) {
+          pendingObject = {
+            id: crypto.randomUUID(),
+            type: "path",
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+            pathNodes: [
+              { id: crypto.randomUUID(), x: worldPos.x, y: worldPos.y, type: "smooth" },
+            ],
+            fill: "transparent",
+            stroke: toolStyles["draw_path"]?.stroke || defaultStrokeColor,
+            strokeWidth: toolStyles["draw_path"]?.strokeWidth || defaultStrokeWidth,
+            closed: false,
+          };
+        } else if (pendingObject.pathNodes) {
+          // Check if clicking near first node to close
+          const first = pendingObject.pathNodes[0];
+          const dist = Math.hypot(worldPos.x - first.x, worldPos.y - first.y);
+          if (dist < 10 / zoom && pendingObject.pathNodes.length > 2) {
+            pendingObject.closed = true;
+            objects = [...objects, pendingObject];
+            selectedIds = new Set([pendingObject.id]);
+            pendingObject = null;
+            saveHistory();
+            mode = "select";
+            return;
+          } else {
+            pendingObject.pathNodes.push({
+              id: crypto.randomUUID(),
+              x: worldPos.x,
+              y: worldPos.y,
+              type: "smooth",
+            });
+          }
+        }
+        
+        isDragging = true;
+        // The handle being dragged is the cp2 of the newly added node
+        activeHandle = "cp2";
+        return;
+      }
+
       if (
         mode === "draw_rectangle" ||
         mode === "draw_ellipse" ||
@@ -2472,8 +2575,46 @@
         mode === "select" ||
         mode === "move" ||
         mode === "resize" ||
-        mode === "rotate"
+        mode === "rotate" ||
+        mode === "edit_nodes"
       ) {
+        if (mode === "edit_nodes") {
+           // Hit array of selected objects to find a node/handle
+           let hitNode = null;
+           let hitHandleType = null;
+           for (const objId of selectedIds) {
+               const obj = objects.find(o => o.id === objId);
+               if (obj?.type === "path" && obj.pathNodes) {
+                   // Search backwards to hit top-most
+                   for (let i = obj.pathNodes.length - 1; i >= 0; i--) {
+                       const node = obj.pathNodes[i];
+                       if (Math.hypot(worldPos.x - node.x, worldPos.y - node.y) < 10 / zoom) {
+                           hitNode = node; hitHandleType = "anchor"; break;
+                       }
+                       if (node.cp1x !== undefined && node.cp1y !== undefined && Math.hypot(worldPos.x - node.cp1x, worldPos.y - node.cp1y) < 10 / zoom) {
+                           hitNode = node; hitHandleType = "cp1"; break;
+                       }
+                       if (node.cp2x !== undefined && node.cp2y !== undefined && Math.hypot(worldPos.x - node.cp2x, worldPos.y - node.cp2y) < 10 / zoom) {
+                           hitNode = node; hitHandleType = "cp2"; break;
+                       }
+                   }
+               }
+               if (hitNode) break;
+           }
+           
+           if (hitNode) {
+               // Store reference to what's being dragged via activeHandle string Hack or structured state
+               activeHandle = `node_${hitNode.id}_${hitHandleType}`;
+               isDragging = true;
+               dragStart = { x: worldPos.x, y: worldPos.y };
+               // Not clearing selection or changing snapshot since we edit in place
+               return; // Skip normal selection overlay hit testing
+           } else {
+               // Missed nodes, maybe clicked to add a node? (future enhancement)
+               // For now, doing nothing falls through to empty space click (marquee)
+           }
+        }
+
         const handle = getHandleAtPosition(worldPos.x, worldPos.y);
         if (handle) {
           // Clicked a handle -> Start resizing or rotating
@@ -2541,8 +2682,11 @@
               selectionSnapshot.set(id, {
                 x: obj.x,
                 y: obj.y,
+                width: obj.width,
+                height: obj.height,
                 x2: obj.type === "line" ? obj.x2 : undefined,
                 y2: obj.type === "line" ? obj.y2 : undefined,
+                pathNodes: obj.type === "path" && obj.pathNodes ? JSON.parse(JSON.stringify(obj.pathNodes)) : undefined
               });
             }
           }
@@ -2653,6 +2797,16 @@
             showExportDialog = false;
             return;
           }
+          
+          if (mode === "draw_path" && pendingObject) {
+              if (pendingObject.pathNodes && pendingObject.pathNodes.length > 1) {
+                  objects = [...objects, pendingObject];
+                  selectedIds = new Set([pendingObject.id]);
+                  saveHistory();
+              }
+              pendingObject = null;
+          }
+
           selectedIds = new Set();
           isSpacePressed = false;
           isPanToolActive = false;
@@ -3198,6 +3352,15 @@
   }
 
   function handleDoubleClick(e: MouseEvent) {
+    if (mode === "draw_path" && pendingObject && pendingObject.pathNodes && pendingObject.pathNodes.length > 0) {
+      objects = [...objects, pendingObject];
+      selectedIds = new Set([pendingObject.id]);
+      pendingObject = null;
+      saveHistory();
+      mode = "select";
+      return;
+    }
+
     if (mode !== "select") return;
 
     // Check what we double-clicked
@@ -3403,6 +3566,18 @@
             if (init) {
               obj.x = init.x + finalDx;
               obj.y = init.y + finalDy;
+
+              if (obj.type === "path" && init.pathNodes) {
+                obj.pathNodes = init.pathNodes.map((n: any) => ({
+                  ...n,
+                  x: n.x + finalDx,
+                  y: n.y + finalDy,
+                  cp1x: n.cp1x !== undefined ? n.cp1x + finalDx : undefined,
+                  cp1y: n.cp1y !== undefined ? n.cp1y + finalDy : undefined,
+                  cp2x: n.cp2x !== undefined ? n.cp2x + finalDx : undefined,
+                  cp2y: n.cp2y !== undefined ? n.cp2y + finalDy : undefined,
+                }));
+              }
 
               if (obj.type === "scalebar" && obj.parentId) {
                 obj.presetPosition = "custom";
@@ -3610,6 +3785,22 @@
             obj.width = newW;
             obj.height = newH;
 
+            if (obj.type === "path" && initialState && initialState.pathNodes && initialState.width && initialState.height) {
+              const initX = initialState.x;
+              const initY = initialState.y;
+              const scaleX = newW / initialState.width;
+              const scaleY = newH / initialState.height;
+              obj.pathNodes = initialState.pathNodes.map((n: any) => ({
+                ...n,
+                x: newX + (n.x - initX) * scaleX,
+                y: newY + (n.y - initY) * scaleY,
+                cp1x: n.cp1x !== undefined ? newX + (n.cp1x - initX) * scaleX : undefined,
+                cp1y: n.cp1y !== undefined ? newY + (n.cp1y - initY) * scaleY : undefined,
+                cp2x: n.cp2x !== undefined ? newX + (n.cp2x - initX) * scaleX : undefined,
+                cp2y: n.cp2y !== undefined ? newY + (n.cp2y - initY) * scaleY : undefined,
+              }));
+            }
+
             if (obj.type === "line") {
               // Line resizing is different, usually endpoint moving
               // For now, treat line as box resizing which scales the line
@@ -3648,6 +3839,52 @@
         const currentWorld = screenToWorld(e.clientX, e.clientY);
         pendingObject.x2 = currentWorld.x;
         pendingObject.y2 = currentWorld.y;
+      } else if (mode === "draw_path" && pendingObject && pendingObject.pathNodes) {
+        const lastNode = pendingObject.pathNodes[pendingObject.pathNodes.length - 1];
+        if (activeHandle === "cp2") {
+            const currentWorld = screenToWorld(e.clientX, e.clientY);
+            lastNode.cp2x = currentWorld.x;
+            lastNode.cp2y = currentWorld.y;
+            // Mirror cp1
+            lastNode.cp1x = lastNode.x - (currentWorld.x - lastNode.x);
+            lastNode.cp1y = lastNode.y - (currentWorld.y - lastNode.y);
+        }
+      } else if (mode === "edit_nodes" && activeHandle?.startsWith("node_")) {
+          // Extract nodeid and handle type
+          const parts = activeHandle.split("_");
+          const nodeId = parts[1];
+          const handleType = parts[2];
+          
+          const currentWorld = screenToWorld(e.clientX, e.clientY);
+          
+          for (const objId of selectedIds) {
+              const obj = objects.find(o => o.id === objId);
+              if (obj?.type === "path" && obj.pathNodes) {
+                  const n = obj.pathNodes.find(n => n.id === nodeId);
+                  if (n) {
+                      if (handleType === "anchor") {
+                          const dx = currentWorld.x - n.x;
+                          const dy = currentWorld.y - n.y;
+                          n.x = currentWorld.x;
+                          n.y = currentWorld.y;
+                          if (n.cp1x !== undefined) { n.cp1x += dx; n.cp1y! += dy; }
+                          if (n.cp2x !== undefined) { n.cp2x += dx; n.cp2y! += dy; }
+                      } else if (handleType === "cp1") {
+                          n.cp1x = currentWorld.x; n.cp1y = currentWorld.y;
+                          if (n.type === "smooth" && n.cp2x !== undefined) {
+                              n.cp2x = n.x - (currentWorld.x - n.x);
+                              n.cp2y = n.y - (currentWorld.y - n.y);
+                          }
+                      } else if (handleType === "cp2") {
+                          n.cp2x = currentWorld.x; n.cp2y = currentWorld.y;
+                          if (n.type === "smooth" && n.cp1x !== undefined) {
+                              n.cp1x = n.x - (currentWorld.x - n.x);
+                              n.cp1y = n.y - (currentWorld.y - n.y);
+                          }
+                      }
+                  }
+              }
+          }
       }
     } else {
       // Not dragging - update hover state for cursor

@@ -30,11 +30,11 @@
       </button>
     </Tooltip>
 
-    <Tooltip label="Pan" shortcut="P">
+    <Tooltip label="Pan" shortcut="Space">
       <button
         class:active={isPanToolActive}
         onclick={() => setMode("pan")}
-        title="Pan Tool (P)"
+        title="Pan Tool (Space)"
       >
         <!-- Hand icon -->
         <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
@@ -138,6 +138,46 @@
           stroke-width="2"
         >
           <path d="M4 7V4h16v3M9 20h6M12 4v16" />
+        </svg>
+      </button>
+    </Tooltip>
+
+    <Tooltip label="Pen" shortcut="P">
+      <button
+        class:active={mode === "draw_path"}
+        onclick={() => setMode("draw_path")}
+        title="Pen Tool (P)"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path d="M12 19l7-7 3 3-7 7-3-3z" />
+          <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+          <path d="M2 2l7.586 7.586" />
+          <circle cx="11" cy="11" r="2" />
+        </svg>
+      </button>
+    </Tooltip>
+
+    <Tooltip label="Node Edit" shortcut="A">
+      <button
+        class:active={mode === "edit_nodes"}
+        onclick={() => setMode("edit_nodes")}
+        title="Node Select Tool (A)"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path d="M6 22V6l10 10h-6l-4 6z" />
+          <!-- Small handles on the cursor to represent nodes -->
+          <circle cx="16" cy="16" r="1.5" fill="currentColor" />
+          <circle cx="6" cy="6" r="1.5" fill="currentColor" />
         </svg>
       </button>
     </Tooltip>

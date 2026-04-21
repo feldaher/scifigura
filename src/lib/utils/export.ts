@@ -224,6 +224,34 @@ function exportSVG(
              content += `\n<polygon points="${o.x},${o.y} ${ax1},${ay1} ${ax2},${ay2}" fill="${o.stroke || "black"}"${transform} />`;
         }
         
+      } else if (o.type === "path" && o.pathNodes && o.pathNodes.length > 0) {
+        let d = `M ${o.pathNodes[0].x} ${o.pathNodes[0].y}`;
+        for (let i = 1; i < o.pathNodes.length; i++) {
+            const prev = o.pathNodes[i-1];
+            const curr = o.pathNodes[i];
+            const cp1x = prev.cp2x ?? prev.x;
+            const cp1y = prev.cp2y ?? prev.y;
+            const cp2x = curr.cp1x ?? curr.x;
+            const cp2y = curr.cp1y ?? curr.y;
+            if (prev.cp2x !== undefined || curr.cp1x !== undefined) {
+                d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${curr.x} ${curr.y}`;
+            } else {
+                d += ` L ${curr.x} ${curr.y}`;
+            }
+        }
+        if (o.closed && o.pathNodes.length > 2) {
+            const prev = o.pathNodes[o.pathNodes.length-1];
+            const curr = o.pathNodes[0];
+            const cp1x = prev.cp2x ?? prev.x;
+            const cp1y = prev.cp2y ?? prev.y;
+            const cp2x = curr.cp1x ?? curr.x;
+            const cp2y = curr.cp1y ?? curr.y;
+            if (prev.cp2x !== undefined || curr.cp1x !== undefined) {
+                d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${curr.x} ${curr.y}`;
+            }
+            d += " Z";
+        }
+        content = `<path d="${d}" fill="${o.fill || "transparent"}" stroke="${o.stroke || "none"}" stroke-width="${o.strokeWidth || 0}"${transform} />`;
       } else if (o.type === "text" && o.text) {
         content = `<text x="${o.x}" y="${o.y}" font-family="${o.fontFamily}" font-size="${o.fontSize}" font-weight="${o.fontWeight}" font-style="${o.fontStyle}" fill="${o.fill}" dominant-baseline="hanging"${transform}>${o.text}</text>`;
       } else if (o.type === "label" && o.text) {

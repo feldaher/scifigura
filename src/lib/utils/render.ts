@@ -201,6 +201,45 @@ export function drawObject(
     }
     ctx.restore();
     return;
+  } else if (obj.type === "path" && obj.pathNodes && obj.pathNodes.length > 0) {
+    ctx.beginPath();
+    const nodes = obj.pathNodes;
+    ctx.moveTo(nodes[0].x, nodes[0].y);
+    
+    // Draw all segments
+    for (let i = 1; i < nodes.length; i++) {
+        const prev = nodes[i - 1];
+        const curr = nodes[i];
+        const cp1x = prev.cp2x ?? prev.x;
+        const cp1y = prev.cp2y ?? prev.y;
+        const cp2x = curr.cp1x ?? curr.x;
+        const cp2y = curr.cp1y ?? curr.y;
+        
+        if (prev.cp2x !== undefined || curr.cp1x !== undefined) {
+             ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, curr.x, curr.y);
+        } else {
+             ctx.lineTo(curr.x, curr.y);
+        }
+    }
+    
+    if (obj.closed && nodes.length > 2) {
+        const prev = nodes[nodes.length - 1];
+        const curr = nodes[0];
+        const cp1x = prev.cp2x ?? prev.x;
+        const cp1y = prev.cp2y ?? prev.y;
+        const cp2x = curr.cp1x ?? curr.x;
+        const cp2y = curr.cp1y ?? curr.y;
+        
+        if (prev.cp2x !== undefined || curr.cp1x !== undefined) {
+             ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, curr.x, curr.y);
+        }
+        ctx.closePath();
+    }
+    
+    if (obj.fill && obj.fill !== "transparent") {
+       ctx.fillStyle = obj.fill;
+       ctx.fill();
+    }
   } else if (obj.type === "image" && obj.src) {
     // Draw Image
     let img = imageCache.get(obj.src);
