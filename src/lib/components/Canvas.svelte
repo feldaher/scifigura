@@ -2630,6 +2630,27 @@
            }
            
            if (hitNode) {
+               if (event.altKey) {
+                   if (hitHandleType === "anchor") {
+                       // Toggle handles
+                       if (hitNode.cp1x !== undefined || hitNode.cp2x !== undefined) {
+                           // Has handles -> delete them, make corner
+                           hitNode.cp1x = undefined; hitNode.cp1y = undefined;
+                           hitNode.cp2x = undefined; hitNode.cp2y = undefined;
+                           hitNode.type = "corner";
+                       } else {
+                           // No handles -> prep to pull handles
+                           hitNode.type = "smooth";
+                           hitNode.cp1x = hitNode.x; hitNode.cp1y = hitNode.y;
+                           hitNode.cp2x = hitNode.x; hitNode.cp2y = hitNode.y;
+                           hitHandleType = "cp2"; // Start pulling
+                       }
+                   } else if (hitHandleType === "cp1" || hitHandleType === "cp2") {
+                       // Clicking a handle with Alt breaks symmetry
+                       hitNode.type = "corner";
+                   }
+               }
+               
                // Store reference to what's being dragged via activeHandle string Hack or structured state
                activeHandle = `node_${hitNode.id}_${hitHandleType}`;
                isDragging = true;
