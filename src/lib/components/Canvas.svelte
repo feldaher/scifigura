@@ -2769,10 +2769,16 @@
           mode = "draw_text";
           event.preventDefault();
           return;
+        case "a":
+        case "A":
+          isPanToolActive = false;
+          mode = "edit_nodes";
+          event.preventDefault();
+          return;
         case "p":
         case "P":
-          isPanToolActive = !isPanToolActive;
-          isSpacePressed = false;
+          isPanToolActive = false;
+          mode = "draw_path";
           event.preventDefault();
           return;
         case "s":
