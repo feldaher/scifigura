@@ -1131,6 +1131,29 @@
     // Draw Pending Object (being drawn)
     if (pendingObject) {
       drawObject(ctx, pendingObject, imageCache);
+      
+      // Draw live curve preview for draw_path
+      if (mode === "draw_path" && 
+          pendingObject.type === "path" && 
+          pendingObject.pathNodes && 
+          pendingObject.pathNodes.length > 0 && 
+          !isDragging) 
+      {
+          const lastNode = pendingObject.pathNodes[pendingObject.pathNodes.length - 1];
+          const mouseW = screenToWorld(lastMousePos.x, lastMousePos.y);
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(lastNode.x, lastNode.y);
+          if (lastNode.cp2x !== undefined && lastNode.cp2y !== undefined) {
+              ctx.bezierCurveTo(lastNode.cp2x, lastNode.cp2y, mouseW.x, mouseW.y, mouseW.x, mouseW.y);
+          } else {
+              ctx.lineTo(mouseW.x, mouseW.y);
+          }
+          ctx.strokeStyle = pendingObject.stroke || "#000";
+          ctx.lineWidth = pendingObject.strokeWidth || 2;
+          ctx.stroke();
+          ctx.restore();
+      }
     }
 
     // Draw Selection Overlay
@@ -2496,7 +2519,7 @@
             width: 0,
             height: 0,
             pathNodes: [
-              { id: crypto.randomUUID(), x: worldPos.x, y: worldPos.y, type: "smooth" },
+              { id: crypto.randomUUID(), x: worldPos.x, y: worldPos.y, cp1x: undefined, cp1y: undefined, cp2x: undefined, cp2y: undefined, type: "smooth" },
             ],
             fill: "transparent",
             stroke: toolStyles["draw_path"]?.stroke || defaultStrokeColor,
@@ -2520,6 +2543,10 @@
               id: crypto.randomUUID(),
               x: worldPos.x,
               y: worldPos.y,
+              cp1x: undefined,
+              cp1y: undefined,
+              cp2x: undefined,
+              cp2y: undefined,
               type: "smooth",
             });
           }
