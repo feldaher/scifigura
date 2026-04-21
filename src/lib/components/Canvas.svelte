@@ -20,6 +20,7 @@
   import { exportCanvas, type ExportOptions } from "../utils/export";
   import { renderSvgToDataUrl } from "../utils/svg";
   import { renderPdfPageToDataUrl } from "../utils/pdf";
+  import { getClosestPointOnPath, splitBezierSegment } from "../utils/bezier";
 
   // Props
   let { width = 800, height = 600 } = $props();
@@ -64,6 +65,7 @@
   let selectionSnapshot = $state(
     new Map<string, { x: number; y: number; width?: number; height?: number; x2?: number; y2?: number; pathNodes?: any[] }>(),
   );
+  let selectedNodeId = $state<string | null>(null);
   let activeGuides = $state<SnapGuide[]>([]); // Visual guides for snapping
 
   // History State
@@ -1330,7 +1332,7 @@
                     ctx.stroke();
                 }
                 
-                ctx.fillStyle = "#fff";
+                ctx.fillStyle = node.id === selectedNodeId ? "#2196f3" : "#fff";
                 ctx.strokeStyle = "#2196f3";
                 ctx.fillRect(node.x - handleSize/2, node.y - handleSize/2, handleSize, handleSize);
                 ctx.strokeRect(node.x - handleSize/2, node.y - handleSize/2, handleSize, handleSize);
@@ -2630,6 +2632,7 @@
            }
            
            if (hitNode) {
+               if (hitHandleType === "anchor") selectedNodeId = hitNode.id;
                if (event.altKey) {
                    if (hitHandleType === "anchor") {
                        // Toggle handles
@@ -2658,8 +2661,39 @@
                // Not clearing selection or changing snapshot since we edit in place
                return; // Skip normal selection overlay hit testing
            } else {
-               // Missed nodes, maybe clicked to add a node? (future enhancement)
-               // For now, doing nothing falls through to empty space click (marquee)
+               // Missed nodes, maybe clicked to add a node?
+               for (const objId of selectedIds) {
+                   const obj = objects.find(o => o.id === objId);
+                   if (obj?.type === "path" && obj.pathNodes) {
+                       const hit = getClosestPointOnPath(obj.pathNodes, !!obj.closed, worldPos.x, worldPos.y);
+                       if (hit && hit.dist < 10 / zoom) {
+                           // We hit a segment! Let's insert a node
+                           const prevIndex = hit.segmentIndex;
+                           const currIndex = (hit.segmentIndex + 1) % obj.pathNodes.length;
+                           const prev = obj.pathNodes[prevIndex];
+                           const curr = obj.pathNodes[currIndex];
+                           
+                           const { prev: newPrev, newNode, curr: newCurr } = splitBezierSegment(prev, curr, hit.t);
+                           
+                           const newId = crypto.randomUUID();
+                           const fullNewNode = { ...newNode, id: newId };
+                           
+                           saveHistory();
+                           obj.pathNodes[prevIndex] = newPrev;
+                           if (currIndex !== 0) {
+                               obj.pathNodes[currIndex] = newCurr;
+                               obj.pathNodes.splice(currIndex, 0, fullNewNode as any);
+                           } else {
+                               obj.pathNodes[0] = newCurr;
+                               obj.pathNodes.push(fullNewNode as any);
+                           }
+                           
+                           selectedNodeId = newId;
+                           selectedIds = new Set(selectedIds);
+                           return; // Skip normal overlay
+                       }
+                   }
+               }
            }
         }
 
@@ -3124,6 +3158,26 @@
     // ── Delete / Backspace ───────────────────────────────────────────────────
     if (code === "Backspace" || code === "Delete") {
       if (textInput.visible) return;
+      
+      if (mode === "edit_nodes" && selectedNodeId) {
+        saveHistory();
+        objects = objects.filter((obj) => {
+          if (obj.type === "path" && obj.pathNodes && selectedIds.has(obj.id)) {
+            const initialLength = obj.pathNodes.length;
+            obj.pathNodes = obj.pathNodes.filter(n => n.id !== selectedNodeId);
+            if (obj.pathNodes.length < 2 && initialLength >= 2) {
+                selectedIds.delete(obj.id); // Destroy path if it has less than 2 points left
+                return false;
+            }
+          }
+          return true;
+        });
+        selectedIds = new Set(selectedIds);
+        selectedNodeId = null;
+        event.preventDefault();
+        return;
+      }
+
       if (selectedIds.size > 0) {
         saveHistory();
         objects = objects.filter((obj) => !selectedIds.has(obj.id));
