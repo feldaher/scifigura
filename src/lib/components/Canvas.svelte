@@ -2853,6 +2853,7 @@
           return;
         case "a":
         case "A":
+          // bare 'a' → node edit tool (no modifier)
           isPanToolActive = false;
           mode = "edit_nodes";
           event.preventDefault();
@@ -2920,6 +2921,11 @@
     // ── Ctrl shortcuts ───────────────────────────────────────────────────────
     if (ctrl) {
       switch (key.toLowerCase()) {
+        // Select All (Cmd+A / Ctrl+A) — must be here so it takes priority over bare 'a'
+        case "a":
+          selectAll();
+          event.preventDefault(); // critical: stops browser selecting all DOM text
+          return;
         // New canvas
         case "n":
           newCanvas();
@@ -3061,13 +3067,13 @@
           }
           event.preventDefault();
           return;
-        // Grid / Snap toggles
+        // Grid / Snap toggles — Ctrl+; toggles grid, Ctrl+Shift+; toggles snap
+        // (also keep ' for backwards compat on keyboards where it works)
+        case ";":
         case "'":
           if (shift) {
-            // Ctrl+Shift+' → toggle snap
             snapToGrid = !snapToGrid;
           } else {
-            // Ctrl+' → toggle grid
             showGrid = !showGrid;
           }
           event.preventDefault();
@@ -5087,7 +5093,7 @@
         <button
           class="status-toggle {showGrid ? 'on' : 'off'}"
           onclick={() => (showGrid = !showGrid)}
-          title="Toggle Grid (Ctrl+G)">Grid</button
+          title="Toggle Grid (Ctrl+;)">Grid</button
         >
         <button
           class="status-toggle {snapToGrid ? 'on' : 'off'}"
@@ -5418,7 +5424,7 @@
                     ><td style="padding:3px 0;width:150px;"
                       ><kbd
                         style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
-                        >Ctrl+'</kbd
+                        >Ctrl+;</kbd
                       ></td
                     ><td style="color:#aaa;">Toggle grid</td></tr
                   >
@@ -5426,7 +5432,7 @@
                     ><td
                       ><kbd
                         style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
-                        >Ctrl+Shift+'</kbd
+                        >Ctrl+Shift+;</kbd
                       ></td
                     ><td style="color:#aaa;">Toggle snap</td></tr
                   >
