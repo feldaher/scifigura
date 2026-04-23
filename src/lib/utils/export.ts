@@ -179,7 +179,29 @@ function exportSVG(
       } else if (o.type === "ellipse") {
         // Ellipse in SVG uses cx, cy
         content = `<ellipse cx="${o.x + o.width / 2}" cy="${o.y + o.height / 2}" rx="${o.width / 2}" ry="${o.height / 2}" fill="${o.fill}" stroke="${o.stroke || "none"}" stroke-width="${o.strokeWidth || 0}"${transform} />`;
+      } else if (o.type === "arc") {
+        const ecx = o.x + o.width / 2;
+        const ecy = o.y + o.height / 2;
+        const rx = Math.abs(o.width / 2);
+        const ry = Math.abs(o.height / 2);
+        const sa = o.startAngle ?? 0;
+        const ea = o.endAngle ?? Math.PI * 2;
+        const closure = o.arcClosed ?? "pie";
+        // Compute arc start/end points on the ellipse
+        const x1 = ecx + rx * Math.cos(sa);
+        const y1 = ecy + ry * Math.sin(sa);
+        const x2 = ecx + rx * Math.cos(ea);
+        const y2 = ecy + ry * Math.sin(ea);
+        // Large arc flag: 1 if the arc spans > 180deg
+        let sweep = ea - sa;
+        while (sweep < 0) sweep += Math.PI * 2;
+        const largeArc = sweep > Math.PI ? 1 : 0;
+        let d = `M ${x1} ${y1} A ${rx} ${ry} 0 ${largeArc} 1 ${x2} ${y2}`;
+        if (closure === "pie") d = `M ${ecx} ${ecy} L ${x1} ${y1} A ${rx} ${ry} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+        else if (closure === "chord") d += " Z";
+        content = `<path d="${d}" fill="${closure === "open" ? "none" : o.fill}" stroke="${o.stroke || "none"}" stroke-width="${o.strokeWidth || 0}"${transform} />`;
       } else if (o.type === "line") {
+
         const x2 = o.x2 ?? o.x;
         const y2 = o.y2 ?? o.y;
         

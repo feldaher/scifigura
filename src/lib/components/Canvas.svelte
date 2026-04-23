@@ -21,6 +21,7 @@
   import { renderSvgToDataUrl } from "../utils/svg";
   import { renderPdfPageToDataUrl } from "../utils/pdf";
   import { getClosestPointOnPath, splitBezierSegment } from "../utils/bezier";
+  import { saveSfsArchive, loadSfsArchive } from "../utils/sfs";
 
   // Props
   let { width = 800, height = 600 } = $props();
@@ -815,6 +816,7 @@
   let toolStyles = $state<Record<string, ToolStyle>>({
     draw_rectangle: { ...defaultToolStyle, fill: "#dddddd", stroke: "#333333" },
     draw_ellipse: { ...defaultToolStyle, fill: "#cccccc", stroke: "#333333" }, // User asked for grey
+    draw_arc:     { ...defaultToolStyle, fill: "#cccccc", stroke: "#333333" },
     draw_line: { ...defaultToolStyle, stroke: "#333333" },
     draw_text: { ...defaultToolStyle, fill: "#333333", fontSize: 16 },
     draw_label: {
@@ -1298,6 +1300,12 @@
           } else if (obj.type === "path" && (mode === "edit_nodes" || (mode === "draw_path" && obj.id === pendingObject?.id)) && obj.pathNodes) {
             // Draw Path Nodes and Control Arms (for edit and draw preview)
             ctx.save();
+            const cx = obj.x + obj.width / 2;
+            const cy = obj.y + obj.height / 2;
+            ctx.translate(cx, cy);
+            ctx.rotate(obj.rotation || 0);
+            ctx.translate(-cx, -cy);
+
             const handleSize = 6 / zoom;
             
             obj.pathNodes.forEach((node) => {
@@ -1337,6 +1345,69 @@
                 ctx.fillRect(node.x - handleSize/2, node.y - handleSize/2, handleSize, handleSize);
                 ctx.strokeRect(node.x - handleSize/2, node.y - handleSize/2, handleSize, handleSize);
             });
+            ctx.restore();
+          } else if (obj.type === "arc" && mode === "edit_nodes") {
+            // Draw arc angle handles: start and end
+            const ecx = obj.x + obj.width / 2;
+            const ecy = obj.y + obj.height / 2;
+            const rx = Math.abs(obj.width / 2);
+            const ry = Math.abs(obj.height / 2);
+            const sa = obj.startAngle ?? 0;
+            const ea = obj.endAngle ?? Math.PI * 2;
+            const handleSize = 8 / zoom;
+
+            ctx.save();
+            ctx.translate(ecx, ecy);
+            ctx.rotate(obj.rotation || 0);
+            ctx.translate(-ecx, -ecy);
+            
+            ctx.lineWidth = 1 / zoom;
+
+            // Guide lines from center to each handle
+            ctx.strokeStyle = "#888";
+            ctx.setLineDash([4/zoom, 4/zoom]);
+            ctx.beginPath();
+            ctx.moveTo(ecx, ecy);
+            ctx.lineTo(ecx + rx * Math.cos(sa), ecy + ry * Math.sin(sa));
+            ctx.moveTo(ecx, ecy);
+            ctx.lineTo(ecx + rx * Math.cos(ea), ecy + ry * Math.sin(ea));
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Start angle handle (green)
+            const sx = ecx + rx * Math.cos(sa);
+            const sy = ecy + ry * Math.sin(sa);
+            ctx.beginPath();
+            ctx.arc(sx, sy, handleSize / 2, 0, Math.PI * 2);
+            ctx.fillStyle = "#4caf50";
+            ctx.fill();
+            ctx.strokeStyle = "#fff";
+            ctx.stroke();
+
+            // End angle handle (red)
+            const ex = ecx + rx * Math.cos(ea);
+            const ey = ecy + ry * Math.sin(ea);
+            ctx.beginPath();
+            ctx.arc(ex, ey, handleSize / 2, 0, Math.PI * 2);
+            ctx.fillStyle = "#f44336";
+            ctx.fill();
+            ctx.strokeStyle = "#fff";
+            ctx.stroke();
+
+            ctx.restore();
+          } else if ((obj.type === "ellipse" || obj.type === "rectangle") && mode === "edit_nodes") {
+            // Hint: click to convert to path
+            const ecx = obj.x + obj.width / 2;
+            const ecy = obj.y + obj.height / 2;
+            ctx.save();
+            ctx.translate(ecx, ecy);
+            ctx.rotate(obj.rotation || 0);
+            ctx.translate(-ecx, -ecy);
+            
+            ctx.font = `${12/zoom}px sans-serif`;
+            ctx.fillStyle = "#2196f3";
+            ctx.textAlign = "center";
+            ctx.fillText("Click to convert to path", ecx, obj.y - 10/zoom);
             ctx.restore();
           } else {
             // Standard Single Selection Overlay (Resize/Rotate)
@@ -2563,6 +2634,7 @@
       if (
         mode === "draw_rectangle" ||
         mode === "draw_ellipse" ||
+        mode === "draw_arc" ||
         mode === "draw_line"
       ) {
         // Start drawing
@@ -2578,12 +2650,18 @@
               ? "rectangle"
               : mode === "draw_ellipse"
                 ? "ellipse"
-                : "line",
+                : mode === "draw_arc"
+                  ? "arc"
+                  : "line",
           x: worldPos.x,
           y: worldPos.y,
-          // For Rect/Ellipse
+          // For Rect/Ellipse/Arc
           width: 0,
           height: 0,
+          // For Arc
+          startAngle: 0,
+          endAngle: Math.PI * 1.5, // Default: 3/4 circle so it looks like a pie
+          arcClosed: "pie",
           // For Line
           x2: worldPos.x,
           y2: worldPos.y,
@@ -2608,22 +2686,33 @@
         mode === "edit_nodes"
       ) {
         if (mode === "edit_nodes") {
-           // Hit array of selected objects to find a node/handle
+           // 1. Hit test for path nodes/handles
            let hitNode = null;
            let hitHandleType = null;
            for (const objId of selectedIds) {
                const obj = objects.find(o => o.id === objId);
                if (obj?.type === "path" && obj.pathNodes) {
+                   const cx = obj.x + obj.width / 2;
+                   const cy = obj.y + obj.height / 2;
+                   const cos = Math.cos(-(obj.rotation || 0));
+                   const sin = Math.sin(-(obj.rotation || 0));
+                   const dx = worldPos.x - cx;
+                   const dy = worldPos.y - cy;
+                   const lp = {
+                     x: cx + dx * cos - dy * sin,
+                     y: cy + dx * sin + dy * cos
+                   };
+
                    // Search backwards to hit top-most
                    for (let i = obj.pathNodes.length - 1; i >= 0; i--) {
                        const node = obj.pathNodes[i];
-                       if (Math.hypot(worldPos.x - node.x, worldPos.y - node.y) < 10 / zoom) {
+                       if (Math.hypot(lp.x - node.x, lp.y - node.y) < 10 / zoom) {
                            hitNode = node; hitHandleType = "anchor"; break;
                        }
-                       if (node.cp1x !== undefined && node.cp1y !== undefined && Math.hypot(worldPos.x - node.cp1x, worldPos.y - node.cp1y) < 10 / zoom) {
+                       if (node.cp1x !== undefined && node.cp1y !== undefined && Math.hypot(lp.x - node.cp1x, lp.y - node.cp1y) < 10 / zoom) {
                            hitNode = node; hitHandleType = "cp1"; break;
                        }
-                       if (node.cp2x !== undefined && node.cp2y !== undefined && Math.hypot(worldPos.x - node.cp2x, worldPos.y - node.cp2y) < 10 / zoom) {
+                       if (node.cp2x !== undefined && node.cp2y !== undefined && Math.hypot(lp.x - node.cp2x, lp.y - node.cp2y) < 10 / zoom) {
                            hitNode = node; hitHandleType = "cp2"; break;
                        }
                    }
@@ -2635,50 +2724,93 @@
                if (hitHandleType === "anchor") selectedNodeId = hitNode.id;
                if (event.altKey) {
                    if (hitHandleType === "anchor") {
-                       // Toggle handles
                        if (hitNode.cp1x !== undefined || hitNode.cp2x !== undefined) {
-                           // Has handles -> delete them, make corner
-                           hitNode.cp1x = undefined; hitNode.cp1y = undefined;
-                           hitNode.cp2x = undefined; hitNode.cp2y = undefined;
+                           hitNode.cp1x = undefined; hitNode.cp2x = undefined;
+                           hitNode.cp1y = undefined; hitNode.cp2y = undefined;
                            hitNode.type = "corner";
                        } else {
-                           // No handles -> prep to pull handles
                            hitNode.type = "smooth";
                            hitNode.cp1x = hitNode.x; hitNode.cp1y = hitNode.y;
                            hitNode.cp2x = hitNode.x; hitNode.cp2y = hitNode.y;
-                           hitHandleType = "cp2"; // Start pulling
+                           hitHandleType = "cp2";
                        }
-                   } else if (hitHandleType === "cp1" || hitHandleType === "cp2") {
-                       // Clicking a handle with Alt breaks symmetry
+                   } else {
                        hitNode.type = "corner";
                    }
                }
-               
-               // Store reference to what's being dragged via activeHandle string Hack or structured state
                activeHandle = `node_${hitNode.id}_${hitHandleType}`;
                isDragging = true;
                dragStart = { x: worldPos.x, y: worldPos.y };
-               // Not clearing selection or changing snapshot since we edit in place
-               return; // Skip normal selection overlay hit testing
+               return;
            } else {
-               // Missed nodes, maybe clicked to add a node?
+               // 2. Missed path nodes — check for arc handles or shape conversion or path segments
                for (const objId of selectedIds) {
                    const obj = objects.find(o => o.id === objId);
-                   if (obj?.type === "path" && obj.pathNodes) {
-                       const hit = getClosestPointOnPath(obj.pathNodes, !!obj.closed, worldPos.x, worldPos.y);
+                   if (!obj) continue;
+
+                   // Arc: Hit test start/end handles
+                   if (obj.type === "arc") {
+                       const ecx = obj.x + obj.width / 2;
+                       const ecy = obj.y + obj.height / 2;
+                       const rx = Math.abs(obj.width / 2);
+                       const ry = Math.abs(obj.height / 2);
+                       const cos = Math.cos(-(obj.rotation || 0));
+                       const sin = Math.sin(-(obj.rotation || 0));
+                       const dx = worldPos.x - ecx;
+                       const dy = worldPos.y - ecy;
+                       const lp = { x: ecx + dx * cos - dy * sin, y: ecy + dx * sin + dy * cos };
+
+                       const sa = obj.startAngle ?? 0;
+                       const ea = obj.endAngle ?? Math.PI * 2;
+                       const threshold = 12 / zoom;
+                       
+                       if (Math.hypot(lp.x - (ecx + rx * Math.cos(sa)), lp.y - (ecy + ry * Math.sin(sa))) < threshold) {
+                           activeHandle = `arc_${obj.id}_start`;
+                           isDragging = true;
+                           dragStart = { x: worldPos.x, y: worldPos.y };
+                           return;
+                       }
+                       if (Math.hypot(lp.x - (ecx + rx * Math.cos(ea)), lp.y - (ecy + ry * Math.sin(ea))) < threshold) {
+                           activeHandle = `arc_${obj.id}_end`;
+                           isDragging = true;
+                           dragStart = { x: worldPos.x, y: worldPos.y };
+                           return;
+                       }
+                   }
+
+                   // Shape: Convert to path (only if click is over the shape)
+                   // We use simple bounding box check for now as it's common for conversion hints
+                   if (obj.type === "ellipse" || obj.type === "rectangle") {
+                       const cx = obj.x + obj.width / 2;
+                       const cy = obj.y + obj.height / 2;
+                       const cos = Math.cos(-(obj.rotation || 0));
+                       const sin = Math.sin(-(obj.rotation || 0));
+                       const dx = worldPos.x - cx;
+                       const dy = worldPos.y - cy;
+                       const lx = dx * cos - dy * sin;
+                       const ly = dx * sin + dy * cos;
+                       
+                       if (Math.abs(lx) < obj.width / 2 && Math.abs(ly) < obj.height / 2) {
+                           saveHistory();
+                           const path = convertToPath(obj);
+                           const idx = objects.findIndex(o => o.id === obj.id);
+                           if (idx !== -1) objects[idx] = path;
+                           selectedIds = new Set(selectedIds);
+                           return;
+                       }
+                   }
+
+                   // Path: Add node to segment
+                   if (obj.type === "path" && obj.pathNodes) {
+                       const hit = getClosestPointOnPath(obj.pathNodes, !!obj.closed, lp.x, lp.y);
                        if (hit && hit.dist < 10 / zoom) {
-                           // We hit a segment! Let's insert a node
+                           saveHistory();
                            const prevIndex = hit.segmentIndex;
                            const currIndex = (hit.segmentIndex + 1) % obj.pathNodes.length;
-                           const prev = obj.pathNodes[prevIndex];
-                           const curr = obj.pathNodes[currIndex];
-                           
-                           const { prev: newPrev, newNode, curr: newCurr } = splitBezierSegment(prev, curr, hit.t);
-                           
+                           const { prev: newPrev, newNode, curr: newCurr } = splitBezierSegment(obj.pathNodes[prevIndex], obj.pathNodes[currIndex], hit.t);
                            const newId = crypto.randomUUID();
                            const fullNewNode = { ...newNode, id: newId };
                            
-                           saveHistory();
                            obj.pathNodes[prevIndex] = newPrev;
                            if (currIndex !== 0) {
                                obj.pathNodes[currIndex] = newCurr;
@@ -2687,14 +2819,12 @@
                                obj.pathNodes[0] = newCurr;
                                obj.pathNodes.push(fullNewNode as any);
                            }
-                           
                            selectedNodeId = newId;
-                           selectedIds = new Set(selectedIds);
-                           return; // Skip normal overlay
+                           return;
                        }
                    }
                }
-           }
+            }
         }
 
         const handle = getHandleAtPosition(worldPos.x, worldPos.y);
@@ -2837,6 +2967,12 @@
         case "E":
           isPanToolActive = false;
           mode = "draw_ellipse";
+          event.preventDefault();
+          return;
+        case "w":
+        case "W":
+          isPanToolActive = false;
+          mode = "draw_arc";
           event.preventDefault();
           return;
         case "l":
@@ -3345,6 +3481,55 @@
     if (selectedIds.size === 0) return;
     copySelected();
     pasteClipboard();
+  }
+
+  function convertToPath(obj: CanvasObject): CanvasObject {
+    const nodes: PathNode[] = [];
+    if (obj.type === "rectangle") {
+      const { x, y, width, height } = obj;
+      nodes.push({ id: crypto.randomUUID(), x, y, type: "corner" });
+      nodes.push({ id: crypto.randomUUID(), x: x + width, y, type: "corner" });
+      nodes.push({ id: crypto.randomUUID(), x: x + width, y: y + height, type: "corner" });
+      nodes.push({ id: crypto.randomUUID(), x, y: y + height, type: "corner" });
+    } else if (obj.type === "ellipse") {
+      const cx = obj.x + obj.width / 2;
+      const cy = obj.y + obj.height / 2;
+      const rx = obj.width / 2;
+      const ry = obj.height / 2;
+      const k = 0.5522847;
+
+      // Top
+      nodes.push({
+        id: crypto.randomUUID(), x: cx, y: cy - ry, type: "smooth",
+        cp1x: cx - rx * k, cp1y: cy - ry,
+        cp2x: cx + rx * k, cp2y: cy - ry
+      });
+      // Right
+      nodes.push({
+        id: crypto.randomUUID(), x: cx + rx, y: cy, type: "smooth",
+        cp1x: cx + rx, cp1y: cy - ry * k,
+        cp2x: cx + rx, cp2y: cy + ry * k
+      });
+      // Bottom
+      nodes.push({
+        id: crypto.randomUUID(), x: cx, y: cy + ry, type: "smooth",
+        cp1x: cx + rx * k, cp1y: cy + ry,
+        cp2x: cx - rx * k, cp2y: cy + ry
+      });
+      // Left
+      nodes.push({
+        id: crypto.randomUUID(), x: cx - rx, y: cy, type: "smooth",
+        cp1x: cx - rx, cp1y: cy + ry * k,
+        cp2x: cx - rx, cp2y: cy - ry * k
+      });
+    }
+
+    return {
+      ...obj,
+      type: "path",
+      pathNodes: nodes,
+      closed: true
+    };
   }
 
   // ── Group / Ungroup ──────────────────────────────────────────────────────────
@@ -3939,7 +4124,7 @@
           render(); // Show selection rectangle while dragging
         }
       } else if (
-        (mode === "draw_rectangle" || mode === "draw_ellipse") &&
+        (mode === "draw_rectangle" || mode === "draw_ellipse" || mode === "draw_arc") &&
         pendingObject
       ) {
         const currentWorld = screenToWorld(e.clientX, e.clientY);
@@ -3976,27 +4161,64 @@
               if (obj?.type === "path" && obj.pathNodes) {
                   const n = obj.pathNodes.find(n => n.id === nodeId);
                   if (n) {
+                      // Account for object rotation when dragging nodes
+                      const cx = obj.x + obj.width / 2;
+                      const cy = obj.y + obj.height / 2;
+                      const cos = Math.cos(-(obj.rotation || 0));
+                      const sin = Math.sin(-(obj.rotation || 0));
+                      const mdx = currentWorld.x - cx;
+                      const mdy = currentWorld.y - cy;
+                      const localX = cx + mdx * cos - mdy * sin;
+                      const localY = cy + mdx * sin + mdy * cos;
+
                       if (handleType === "anchor") {
-                          const dx = currentWorld.x - n.x;
-                          const dy = currentWorld.y - n.y;
-                          n.x = currentWorld.x;
-                          n.y = currentWorld.y;
+                          const dx = localX - n.x;
+                          const dy = localY - n.y;
+                          n.x = localX;
+                          n.y = localY;
                           if (n.cp1x !== undefined) { n.cp1x += dx; n.cp1y! += dy; }
                           if (n.cp2x !== undefined) { n.cp2x += dx; n.cp2y! += dy; }
                       } else if (handleType === "cp1") {
-                          n.cp1x = currentWorld.x; n.cp1y = currentWorld.y;
+                          n.cp1x = localX; n.cp1y = localY;
                           if (n.type === "smooth" && n.cp2x !== undefined) {
-                              n.cp2x = n.x - (currentWorld.x - n.x);
-                              n.cp2y = n.y - (currentWorld.y - n.y);
+                              n.cp2x = n.x - (localX - n.x);
+                              n.cp2y = n.y - (localY - n.y);
                           }
                       } else if (handleType === "cp2") {
-                          n.cp2x = currentWorld.x; n.cp2y = currentWorld.y;
+                          n.cp2x = localX; n.cp2y = localY;
                           if (n.type === "smooth" && n.cp1x !== undefined) {
-                              n.cp1x = n.x - (currentWorld.x - n.x);
-                              n.cp1y = n.y - (currentWorld.y - n.y);
+                              n.cp1x = n.x - (localX - n.x);
+                              n.cp1y = n.y - (localY - n.y);
                           }
                       }
                   }
+              }
+          }
+      } else if (mode === "edit_nodes" && activeHandle?.startsWith("arc_")) {
+          const parts = activeHandle.split("_");
+          const objId = parts[1];
+          const type = parts[2]; // "start" or "end"
+          
+          const obj = objects.find(o => o.id === objId);
+          if (obj && obj.type === "arc") {
+              const currentWorld = screenToWorld(e.clientX, e.clientY);
+              const ecx = obj.x + obj.width / 2;
+              const ecy = obj.y + obj.height / 2;
+              
+              // Local space transformation (inverse rotation)
+              const cos = Math.cos(-(obj.rotation || 0));
+              const sin = Math.sin(-(obj.rotation || 0));
+              const dx = currentWorld.x - ecx;
+              const dy = currentWorld.y - ecy;
+              const lx = dx * cos - dy * sin;
+              const ly = dx * sin + dy * cos;
+              
+              const angle = Math.atan2(ly, lx);
+              
+              if (type === "start") {
+                  obj.startAngle = angle;
+              } else {
+                  obj.endAngle = angle;
               }
           }
       }
@@ -4037,6 +4259,7 @@
     } else if (
       (mode === "draw_rectangle" ||
         mode === "draw_ellipse" ||
+        mode === "draw_arc" ||
         mode === "draw_line") &&
       pendingObject
     ) {
@@ -4103,24 +4326,33 @@
   }
 
   async function saveProject() {
-    const data = JSON.stringify(objects, null, 2);
     if (isTauri()) {
       const path = await save({
-        filters: [{ name: "SciFigura Project", extensions: ["json"] }],
-        defaultPath: "my_figure.json",
+        filters: [
+          { name: "SciFigura Project", extensions: ["sfs"] },
+          { name: "Legacy SciFigura Project", extensions: ["json"] }
+        ],
+        defaultPath: "my_figure.sfs",
       });
       if (path) {
-        await writeFile(path, new TextEncoder().encode(data));
+        if (path.endsWith(".json")) {
+           const data = JSON.stringify(objects, null, 2);
+           await writeFile(path, new TextEncoder().encode(data));
+        } else {
+           const archiveBytes = await saveSfsArchive(objects);
+           await writeFile(path, archiveBytes);
+        }
         // Clear recovery file cleanly after an explicit external save
         await remove("recovery.json", { baseDir: BaseDirectory.AppData }).catch(() => {});
       }
     } else {
       // Web fallback
-      const blob = new Blob([data], { type: "application/json" });
+      const archiveBytes = await saveSfsArchive(objects);
+      const blob = new Blob([archiveBytes], { type: "application/octet-stream" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "scifigura_project.json";
+      a.download = "scifigura_project.sfs";
       a.click();
       URL.revokeObjectURL(url);
     }
@@ -4129,39 +4361,59 @@
   function onFileSelect(e: Event) {
     const file = (e.target as HTMLInputElement).files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const json = e.target?.result as string;
-        const parsedObjects = JSON.parse(json) as CanvasObject[];
+    
+    if (file.name.endsWith(".sfs")) {
+      const reader = new FileReader();
+      reader.onload = async (ev) => {
+        try {
+          const buffer = ev.target?.result as ArrayBuffer;
+          const parsedObjects = await loadSfsArchive(buffer);
+          objects = parsedObjects;
+          selectedIds.clear();
+          saveHistory();
+          hasStarted = true;
+        } catch (err) {
+          console.error("Failed to load .sfs project", err);
+          alert("Failed to load .sfs project: " + err);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      // Legacy JSON fallback
+      const reader = new FileReader();
+      reader.onload = async (ev) => {
+        try {
+          const json = ev.target?.result as string;
+          const parsedObjects = JSON.parse(json) as CanvasObject[];
 
-        // Hydrate images to avoid cross-origin WKWebView filtering issues
-        if (isTauri()) {
-          for (const obj of parsedObjects) {
-            if (obj.type === "image" && obj.originalPath) {
-              try {
-                const bytes = await readFile(obj.originalPath);
-                const blob = new Blob([bytes]);
-                obj.src = URL.createObjectURL(blob);
-              } catch (err) {
-                console.error(
-                  "Failed to restore image from " + obj.originalPath,
-                  err,
-                );
+          // Hydrate images to avoid cross-origin WKWebView filtering issues
+          if (isTauri()) {
+            for (const obj of parsedObjects) {
+              if (obj.type === "image" && obj.originalPath) {
+                try {
+                  const bytes = await readFile(obj.originalPath);
+                  const blob = new Blob([bytes]);
+                  obj.src = URL.createObjectURL(blob);
+                } catch (err) {
+                  console.error(
+                    "Failed to restore image from " + obj.originalPath,
+                    err,
+                  );
+                }
               }
             }
           }
-        }
 
-        objects = parsedObjects;
-        selectedIds.clear();
-        saveHistory();
-        hasStarted = true;
-      } catch (err) {
-        alert("Failed to load project");
-      }
-    };
-    reader.readAsText(file);
+          objects = parsedObjects;
+          selectedIds.clear();
+          saveHistory();
+          hasStarted = true;
+        } catch (err) {
+          alert("Failed to load project");
+        }
+      };
+      reader.readAsText(file);
+    }
   }
 
   async function handleExport() {
@@ -5322,9 +5574,33 @@
                     ><td
                       ><kbd
                         style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >W</kbd
+                      ></td
+                    ><td style="color:#aaa;">Arc / Pie</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
                         >L</kbd
                       ></td
                     ><td style="color:#aaa;">Line</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >P</kbd
+                      ></td
+                    ><td style="color:#aaa;">Pen Tool</td></tr
+                  >
+                  <tr
+                    ><td
+                      ><kbd
+                        style="background:#2a2a2a;color:#ddd;padding:1px 7px;border-radius:3px;font-family:monospace;font-size:12px;border:1px solid #444;"
+                        >A</kbd
+                      ></td
+                    ><td style="color:#aaa;">Node Tool</td></tr
                   >
                   <tr
                     ><td

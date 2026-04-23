@@ -106,6 +106,20 @@
       </button>
     </Tooltip>
 
+    <Tooltip label="Arc / Pie" shortcut="W">
+      <button
+        class:active={mode === "draw_arc"}
+        onclick={() => setMode("draw_arc")}
+        title="Arc / Pie Tool (W)"
+      >
+        <!-- Pie slice icon: arc + two radii to center -->
+        <svg width="24" height="24" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2">
+          <path d="M12 12 L20.5 7.5 A9.5 9.5 0 0 1 20.5 16.5 Z" />
+          <path d="M12 12 L12 2.5 A9.5 9.5 0 0 1 20.5 7.5" opacity="0.4"/>
+        </svg>
+      </button>
+    </Tooltip>
+
     <Tooltip label="Line" shortcut="L">
       <button
         class:active={mode === "draw_line"}

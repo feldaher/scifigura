@@ -145,7 +145,7 @@
         </div>
         <div class="action-info">
           <span class="action-title">Open Project</span>
-          <span class="action-sub">Load a saved .json file</span>
+          <span class="action-sub">Load a saved .sfs or .json file</span>
         </div>
         <kbd>Ctrl+O</kbd>
       </button>

@@ -102,7 +102,33 @@ export function drawObject(
     );
     ctx.fillStyle = obj.fill;
     ctx.fill();
+  } else if (obj.type === "arc") {
+    const ecx = obj.x + obj.width / 2;
+    const ecy = obj.y + obj.height / 2;
+    const rx = Math.abs(obj.width / 2);
+    const ry = Math.abs(obj.height / 2);
+    const sa = obj.startAngle ?? 0;
+    const ea = obj.endAngle ?? Math.PI * 2;
+    const closure = obj.arcClosed ?? "pie";
+
+    ctx.beginPath();
+    if (closure === "pie") {
+      ctx.moveTo(ecx, ecy);
+      ctx.ellipse(ecx, ecy, rx, ry, 0, sa, ea);
+      ctx.closePath();
+    } else if (closure === "chord") {
+      ctx.ellipse(ecx, ecy, rx, ry, 0, sa, ea);
+      ctx.closePath();
+    } else {
+      // open arc — stroke only
+      ctx.ellipse(ecx, ecy, rx, ry, 0, sa, ea);
+    }
+    if (obj.fill && obj.fill !== "transparent" && closure !== "open") {
+      ctx.fillStyle = obj.fill;
+      ctx.fill();
+    }
   } else if (obj.type === "line") {
+
     if (obj.x2 !== undefined && obj.y2 !== undefined) {
       ctx.beginPath();
       ctx.moveTo(obj.x, obj.y);

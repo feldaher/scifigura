@@ -12,7 +12,7 @@ export interface PathNode {
 
 export interface CanvasObject {
   id: string;
-  type: "rectangle" | "ellipse" | "line" | "text" | "group" | "label" | "scalebar" | "image" | "path";
+  type: "rectangle" | "ellipse" | "arc" | "line" | "text" | "group" | "label" | "scalebar" | "image" | "path";
   x: number;
   y: number;
   width: number;
@@ -81,6 +81,11 @@ export interface CanvasObject {
   pathNodes?: PathNode[];
   closed?: boolean;
 
+  // For arcs/pies
+  startAngle?: number;  // radians (default 0)
+  endAngle?: number;    // radians (default 2*Math.PI)
+  arcClosed?: "pie" | "chord" | "open"; // how endpoints connect
+
   // Transformations
   rotation?: number; // In radians
 }
@@ -93,6 +98,7 @@ export type InteractionMode =
   | "marquee"
   | "draw_rectangle"
   | "draw_ellipse"
+  | "draw_arc"
   | "draw_line"
   | "draw_text"
   | "draw_label"
