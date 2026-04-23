@@ -11,7 +11,7 @@
   import PresetManagerDialog from "./PresetManagerDialog.svelte";
   import ValidationPanel from "./ValidationPanel.svelte";
   import { loadCustomPresets, saveCustomPresets, type CustomPreset } from "../utils/presets";
-  import type { CanvasObject, InteractionMode, ValidationIssue } from "../types";
+  import type { CanvasObject, InteractionMode, ValidationIssue, PathNode } from "../types";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { readFile, writeFile, writeTextFile, readTextFile, exists, remove, BaseDirectory } from "@tauri-apps/plugin-fs";
   import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
@@ -2802,7 +2802,14 @@
 
                    // Path: Add node to segment
                    if (obj.type === "path" && obj.pathNodes) {
-                       const hit = getClosestPointOnPath(obj.pathNodes, !!obj.closed, lp.x, lp.y);
+                       const pcx = obj.x + obj.width / 2;
+                       const pcy = obj.y + obj.height / 2;
+                       const pcos = Math.cos(-(obj.rotation || 0));
+                       const psin = Math.sin(-(obj.rotation || 0));
+                       const pdx = worldPos.x - pcx;
+                       const pdy = worldPos.y - pcy;
+                       const plp = { x: pcx + pdx * pcos - pdy * psin, y: pcy + pdx * psin + pdy * pcos };
+                       const hit = getClosestPointOnPath(obj.pathNodes, !!obj.closed, plp.x, plp.y);
                        if (hit && hit.dist < 10 / zoom) {
                            saveHistory();
                            const prevIndex = hit.segmentIndex;

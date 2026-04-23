@@ -100,10 +100,10 @@ export function splitBezierSegment(
     const newCurr = { ...curr, cp1x: q2.x, cp1y: q2.y };
     
     if (newNodeType === "corner") {
-         newPrev.cp2x = undefined; newPrev.cp2y = undefined;
-         newNode.cp1x = undefined; newNode.cp1y = undefined;
-         newNode.cp2x = undefined; newNode.cp2y = undefined;
-         newCurr.cp1x = undefined; newCurr.cp1y = undefined;
+         (newPrev as Partial<PathNode>).cp2x = undefined; (newPrev as Partial<PathNode>).cp2y = undefined;
+         (newNode as Partial<PathNode>).cp1x = undefined; (newNode as Partial<PathNode>).cp1y = undefined;
+         (newNode as Partial<PathNode>).cp2x = undefined; (newNode as Partial<PathNode>).cp2y = undefined;
+         (newCurr as Partial<PathNode>).cp1x = undefined; (newCurr as Partial<PathNode>).cp1y = undefined;
     }
 
     return { prev: newPrev, newNode, curr: newCurr };
