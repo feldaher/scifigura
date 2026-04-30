@@ -15,83 +15,8 @@
     <!-- Branding -->
     <div class="brand">
       <div class="logo-mark">
-        <!-- Microscope-inspired icon -->
-        <svg
-          width="40"
-          height="40"
-          viewBox="0 0 40 40"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <rect x="2" y="2" width="36" height="36" rx="8" fill="url(#grad)" />
-          <rect
-            x="12"
-            y="8"
-            width="6"
-            height="14"
-            rx="2"
-            fill="white"
-            fill-opacity="0.9"
-          />
-          <rect
-            x="10"
-            y="20"
-            width="10"
-            height="3"
-            rx="1.5"
-            fill="white"
-            fill-opacity="0.7"
-          />
-          <line
-            x1="15"
-            y1="23"
-            x2="15"
-            y2="30"
-            stroke="white"
-            stroke-width="2.5"
-            stroke-linecap="round"
-          />
-          <line
-            x1="10"
-            y1="30"
-            x2="20"
-            y2="30"
-            stroke="white"
-            stroke-width="2.5"
-            stroke-linecap="round"
-          />
-          <circle
-            cx="27"
-            cy="15"
-            r="6"
-            stroke="white"
-            stroke-width="2"
-            fill="none"
-            stroke-opacity="0.85"
-          />
-          <line
-            x1="31.2"
-            y1="19.2"
-            x2="35"
-            y2="23"
-            stroke="white"
-            stroke-width="2.5"
-            stroke-linecap="round"
-          />
-          <defs>
-            <linearGradient
-              id="grad"
-              x1="0"
-              y1="0"
-              x2="40"
-              y2="40"
-              gradientUnits="userSpaceOnUse"
-            >
-              <stop offset="0%" stop-color="#2563eb" />
-              <stop offset="100%" stop-color="#1e40af" />
-            </linearGradient>
-          </defs>
-        </svg>
+        <!-- App icon -->
+        <img src="/app-icon.png" alt="SciFigura" width="40" height="40" style="border-radius: 8px; filter: drop-shadow(0 4px 12px rgba(0,0,0,0.4));" />
       </div>
       <div class="brand-text">
         <h1>SciFigura</h1>
