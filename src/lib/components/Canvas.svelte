@@ -11,7 +11,7 @@
   import PresetManagerDialog from "./PresetManagerDialog.svelte";
   import ValidationPanel from "./ValidationPanel.svelte";
   import { loadCustomPresets, saveCustomPresets, type CustomPreset } from "../utils/presets";
-  import type { CanvasObject, InteractionMode, ValidationIssue, PathNode } from "../types";
+  import type { CanvasObject, GlobalTheme, InteractionMode, ValidationIssue, PathNode } from "../types";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { readFile, writeFile, writeTextFile, readTextFile, exists, remove, BaseDirectory } from "@tauri-apps/plugin-fs";
   import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
@@ -731,17 +731,17 @@
     tick().then(centerCanvas);
   }
 
-  // Global Font Defaults
-  let defaultFontFamily = $state("Arial");
-  let defaultFontSize = $state(12);
-  let defaultFontWeight = $state<"normal" | "bold">("normal");
-  let defaultFontStyle = $state<"normal" | "italic">("normal");
-
-  // Global Style Defaults
-  let defaultFillColor = $state("#ffffff");
-  let defaultStrokeColor = $state("#000000");
-  let defaultStrokeWidth = $state(2);
-  let defaultLineDash = $state<number[]>([]);
+  // Global Theme
+  let globalTheme = $state<GlobalTheme>({
+    fontFamily: "Arial",
+    fontSize: 12,
+    fontWeight: "normal",
+    fontStyle: "normal",
+    fillColor: "#ffffff",
+    strokeColor: "#000000",
+    strokeWidth: 2,
+    lineDash: []
+  });
 
   // Image Import State
   let imageCache = new Map<string, HTMLImageElement>();
@@ -838,14 +838,9 @@
   function loadToolStyles(toolMode: string) {
     const style = toolStyles[toolMode];
     if (style) {
-      defaultFillColor = style.fill;
-      defaultStrokeColor = style.stroke;
-      defaultStrokeWidth = style.strokeWidth;
-      defaultLineDash = style.lineDash;
-      defaultFontFamily = style.fontFamily;
-      defaultFontSize = style.fontSize;
-      defaultFontWeight = style.fontWeight;
-      defaultFontStyle = style.fontStyle;
+      // With globalTheme, we might not want to clobber the theme just by picking a tool.
+      // But toolStyles exist to override theme for specific drawing tools (like rectangles being grey).
+      // We'll leave toolStyles alone, they just apply during drawing instead of globalTheme.
     }
   }
 
@@ -936,25 +931,7 @@
     // Only verify/sync properties if we are in Select Mode and have a selection.
     // This prevents "fighting" with tool defaults when switching tools.
     if (mode === "select" && selectedIds.size === 1) {
-      console.log("Syncing UI to Selection:", Array.from(selectedIds)[0]);
-      const id = Array.from(selectedIds)[0];
-      const obj = objects.find((o) => o.id === id);
-      if (obj) {
-        if (obj.fill) defaultFillColor = obj.fill;
-        if (obj.stroke) defaultStrokeColor = obj.stroke;
-        if (obj.strokeWidth) defaultStrokeWidth = obj.strokeWidth;
-        if (obj.lineDash) {
-          defaultLineDash = obj.lineDash;
-        }
-
-        // Fonts (if text object)
-        if (obj.type === "text" || obj.type === "label") {
-          if (obj.fontFamily) defaultFontFamily = obj.fontFamily;
-          if (obj.fontSize) defaultFontSize = obj.fontSize;
-          if (obj.fontWeight) defaultFontWeight = obj.fontWeight;
-          if (obj.fontStyle) defaultFontStyle = obj.fontStyle;
-        }
-      }
+      // Syncing handled natively by PropertiesPanel now
     }
     // REMOVED: else if (mode.startsWith("draw_")) loadToolStyles(mode)
     // Rationale: setMode() now handles loading styles EXPLICITLY.
@@ -1129,12 +1106,12 @@
     // Draw Objects
     for (const obj of objects) {
       if (obj.hidden) continue;
-      drawObject(ctx, obj, imageCache);
+      drawObject(ctx, obj, imageCache, globalTheme);
     }
 
     // Draw Pending Object (being drawn)
     if (pendingObject) {
-      drawObject(ctx, pendingObject, imageCache);
+      drawObject(ctx, pendingObject, imageCache, globalTheme);
       
       // Draw live curve preview for draw_path
       if (mode === "draw_path" && 
@@ -1843,11 +1820,11 @@
       parentId: scaleBarTargetImage.id,
       offsetX: scaleBarTargetImage.width - pw - 10,
       offsetY: scaleBarTargetImage.height - 20,
-      fill: defaultFillColor,
-      stroke: defaultStrokeColor,
-      strokeWidth: defaultStrokeWidth,
-      fontFamily: defaultFontFamily,
-      fontSize: 14,
+      fill: undefined,
+      stroke: undefined,
+      strokeWidth: undefined,
+      fontFamily: undefined,
+      fontSize: undefined,
     };
 
     objects.push(newScaleBar);
@@ -2541,13 +2518,11 @@
         const labelText = getLabelText(nextLabelIndex);
 
         const tStyle = toolStyles["draw_label"] || {};
-        // Use persisted label style or sensible default
-        const labelFill =
-          tStyle.fill ||
-          (defaultFillColor === "#ffffff" ? "#000000" : defaultFillColor);
-        const labelFontSize = tStyle.fontSize || 24;
+        // Labels should inherit from globalTheme for font, but use explicit black for fill
+        const labelFill = tStyle.fill || undefined; // inherit from theme (theme.strokeColor used for text)
+        const labelFontSize = tStyle.fontSize || undefined;
         const labelFontWeight = tStyle.fontWeight || "bold";
-        const labelFontFamily = tStyle.fontFamily || defaultFontFamily;
+        const labelFontFamily = tStyle.fontFamily || undefined;
         const labelFontStyle = tStyle.fontStyle || "normal";
 
         const newLabel: CanvasObject = {
@@ -2594,9 +2569,9 @@
             pathNodes: [
               { id: crypto.randomUUID(), x: worldPos.x, y: worldPos.y, cp1x: undefined, cp1y: undefined, cp2x: undefined, cp2y: undefined, type: "smooth" },
             ],
-            fill: "transparent",
-            stroke: toolStyles["draw_path"]?.stroke || defaultStrokeColor,
-            strokeWidth: toolStyles["draw_path"]?.strokeWidth || defaultStrokeWidth,
+            fill: undefined,
+            stroke: undefined,
+            strokeWidth: undefined,
             closed: false,
           };
         } else if (pendingObject.pathNodes) {
@@ -2667,9 +2642,9 @@
           y2: worldPos.y,
           arrowEnd: mode === "draw_line", // Auto-add arrow to end for now
 
-          fill: toolStyle.fill || defaultFillColor,
-          stroke: toolStyle.stroke || defaultStrokeColor,
-          strokeWidth: toolStyle.strokeWidth || defaultStrokeWidth,
+          fill: toolStyle.fill || undefined,
+          stroke: toolStyle.stroke || undefined,
+          strokeWidth: toolStyle.strokeWidth || undefined,
         };
         // Deselect others while drawing
         selectedIds.clear();
@@ -3170,11 +3145,11 @@
                           width: 200,
                           height: 20,
                           text: txt,
-                          fontSize: defaultFontSize,
-                          fontFamily: defaultFontFamily,
-                          fontWeight: defaultFontWeight,
-                          fontStyle: defaultFontStyle,
-                          fill: defaultFillColor,
+                          fontSize: undefined,
+                          fontFamily: undefined,
+                          fontWeight: undefined,
+                          fontStyle: undefined,
+                          fill: undefined,
                           rotation: 0,
                         };
                         objects = [...objects, newText];
@@ -3467,11 +3442,11 @@
             width: 200,
             height: 20,
             text,
-            fontSize: defaultFontSize,
-            fontFamily: defaultFontFamily,
-            fontWeight: defaultFontWeight,
-            fontStyle: defaultFontStyle,
-            fill: defaultFillColor,
+            fontSize: undefined,
+            fontFamily: undefined,
+            fontWeight: undefined,
+            fontStyle: undefined,
+            fill: undefined,
             rotation: 0,
           };
           objects = [...objects, newText];
@@ -3701,11 +3676,11 @@
           width: 0,
           height: 0,
           text: textInput.value,
-          fontSize: defaultFontSize,
-          fontFamily: defaultFontFamily,
-          fontWeight: defaultFontWeight,
-          fontStyle: defaultFontStyle,
-          fill: "#333333",
+          fontSize: undefined,
+          fontFamily: undefined,
+          fontWeight: undefined,
+          fontStyle: undefined,
+          fill: undefined,
         };
         objects.push(newObj);
         selectedIds.clear();
@@ -4346,7 +4321,7 @@
            const data = JSON.stringify(objects, null, 2);
            await writeFile(path, new TextEncoder().encode(data));
         } else {
-           const archiveBytes = await saveSfsArchive(objects);
+           const archiveBytes = await saveSfsArchive(objects, globalTheme);
            await writeFile(path, archiveBytes);
         }
         // Clear recovery file cleanly after an explicit external save
@@ -4354,7 +4329,7 @@
       }
     } else {
       // Web fallback
-      const archiveBytes = await saveSfsArchive(objects);
+      const archiveBytes = await saveSfsArchive(objects, globalTheme);
       const blob = new Blob([archiveBytes], { type: "application/octet-stream" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -4374,8 +4349,9 @@
       reader.onload = async (ev) => {
         try {
           const buffer = ev.target?.result as ArrayBuffer;
-          const parsedObjects = await loadSfsArchive(buffer);
+          const { objects: parsedObjects, theme: parsedTheme } = await loadSfsArchive(buffer);
           objects = parsedObjects;
+          if (parsedTheme) globalTheme = parsedTheme;
           selectedIds.clear();
           saveHistory();
           hasStarted = true;
@@ -4426,7 +4402,7 @@
   async function handleExport() {
     isExporting = true;
     try {
-      const blob = await exportCanvas(objects, exportConfig, imageCache);
+      const blob = await exportCanvas(objects, exportConfig, imageCache, globalTheme);
       if (!blob) {
         alert("Export failed: Empty canvas or error.");
         isExporting = false;
@@ -5905,22 +5881,11 @@
   <PropertiesPanel
     selection={selectedObjects}
     updateObject={updateObjectProperty}
-    bind:defaultFillColor
-    bind:defaultStrokeColor
-    bind:defaultStrokeWidth
-    bind:defaultLineDash
-    bind:defaultFontFamily
-    bind:defaultFontSize
-    bind:defaultFontWeight
-    bind:defaultFontStyle
+    bind:globalTheme
     {applyStyleToSelected}
     {applyFontToSelected}
     {applyStyleToAllScaleBars}
     {resetLabelSequence}
-    onStyleChange={(prop, val) => {
-      // Intercept changes from PropertiesPanel to update Tool Styles
-      updateToolStyle(prop as any, val);
-    }}
   />
 
   <ValidationPanel issues={validationIssues} onSelect={handleValidationSelect} />

@@ -1,7 +1,7 @@
 import * as fflate from 'fflate';
-import type { CanvasObject } from '../types';
+import type { CanvasObject, GlobalTheme } from '../types';
 
-export async function saveSfsArchive(objects: CanvasObject[]): Promise<Uint8Array> {
+export async function saveSfsArchive(objects: CanvasObject[], theme?: GlobalTheme): Promise<Uint8Array> {
   const archiveData: Record<string, Uint8Array> = {};
   const clonedObjects = JSON.parse(JSON.stringify(objects)) as CanvasObject[];
   const assetPromises: Promise<void>[] = [];
@@ -38,7 +38,8 @@ export async function saveSfsArchive(objects: CanvasObject[]): Promise<Uint8Arra
 
   const documentJson = {
     version: "1.0",
-    objects: clonedObjects
+    objects: clonedObjects,
+    theme: theme ?? null
   };
 
   archiveData['document.json'] = new TextEncoder().encode(JSON.stringify(documentJson, null, 2));
@@ -51,7 +52,7 @@ export async function saveSfsArchive(objects: CanvasObject[]): Promise<Uint8Arra
   });
 }
 
-export async function loadSfsArchive(buffer: ArrayBuffer): Promise<CanvasObject[]> {
+export async function loadSfsArchive(buffer: ArrayBuffer): Promise<{ objects: CanvasObject[]; theme: GlobalTheme | null }> {
   const uint8 = new Uint8Array(buffer);
   
   return new Promise((resolve, reject) => {
@@ -66,6 +67,7 @@ export async function loadSfsArchive(buffer: ArrayBuffer): Promise<CanvasObject[
       const document = JSON.parse(documentStr);
       // Fallback for older formats where json might be a raw array
       const objects: CanvasObject[] = document.objects || (Array.isArray(document) ? document : []);
+      const theme: GlobalTheme | null = document.theme ?? null;
 
       for (const obj of objects) {
         if (obj.type === 'image' && obj.src && obj.src.startsWith('images/')) {
@@ -83,7 +85,7 @@ export async function loadSfsArchive(buffer: ArrayBuffer): Promise<CanvasObject[
         }
       }
 
-      resolve(objects);
+      resolve({ objects, theme });
     });
   });
 }

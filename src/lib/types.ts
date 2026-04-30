@@ -1,3 +1,14 @@
+export interface GlobalTheme {
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: "normal" | "bold";
+  fontStyle: "normal" | "italic";
+  fillColor: string;
+  strokeColor: string;
+  strokeWidth: number;
+  lineDash: number[];
+}
+
 export interface PathNode {
   id: string;
   x: number;
@@ -72,7 +83,7 @@ export interface CanvasObject {
   brightness?: number; // 0–200, default 100
   contrast?: number;   // 0–200, default 100
 
-  fill: string;
+  fill?: string;
   stroke?: string;
   strokeWidth?: number;
   lineDash?: number[]; // For dashed lines: [] = solid, [5,5] = dashed, etc.

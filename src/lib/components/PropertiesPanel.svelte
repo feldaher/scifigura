@@ -5,23 +5,14 @@
     selection = [],
     updateObject,
 
-    // Global Defaults (Bindings)
-    defaultFillColor = $bindable(),
-    defaultStrokeColor = $bindable(),
-    defaultStrokeWidth = $bindable(),
-    defaultLineDash = $bindable(),
-
-    defaultFontFamily = $bindable(),
-    defaultFontSize = $bindable(),
-    defaultFontWeight = $bindable(),
-    defaultFontStyle = $bindable(),
+    // Global Theme (Bindable)
+    globalTheme = $bindable(),
 
     // Action Handlers
     applyStyleToSelected,
     applyFontToSelected,
     applyStyleToAllScaleBars,
     resetLabelSequence,
-    onStyleChange,
   }: {
     selection: CanvasObject[];
     updateObject: (
@@ -30,23 +21,12 @@
       save?: boolean,
     ) => void;
 
-    defaultFillColor: string;
-    defaultStrokeColor: string;
-    defaultStrokeWidth: number;
-    defaultLineDash: number[];
-
-    defaultFontFamily: string;
-    defaultFontSize: number;
-    defaultFontWeight: "normal" | "bold";
-    defaultFontStyle: "normal" | "italic";
+    globalTheme: import("../types").GlobalTheme;
 
     applyStyleToSelected: (prop: any, val: any) => void;
     applyFontToSelected: (prop: any, val: any) => void;
     applyStyleToAllScaleBars?: (source: CanvasObject) => void;
     resetLabelSequence?: () => void;
-
-    // Optional callback for tracking style changes (for tool persistence)
-    onStyleChange?: (prop: string, val: any) => void;
   } = $props();
 
   // Helper to safely get value from selection or default
@@ -54,6 +34,27 @@
     if (selection.length !== 1) return def;
     const val = selection[0][key];
     return val !== undefined ? val : def;
+  }
+
+  /** Returns the effective display value: object override if set, else theme fallback */
+  function getEffective(objKey: keyof CanvasObject, themeKey: keyof typeof globalTheme): any {
+    if (selection.length !== 1) return globalTheme[themeKey];
+    const val = selection[0][objKey];
+    return val !== undefined ? val : globalTheme[themeKey];
+  }
+
+  /** True when the selected object has an explicit override for this property */
+  function isOverridden(objKey: keyof CanvasObject): boolean {
+    if (selection.length !== 1) return false;
+    return selection[0][objKey] !== undefined;
+  }
+
+  /** Clear an explicit override on the selected object so it inherits from the theme */
+  function resetToTheme(...keys: (keyof CanvasObject)[]) {
+    if (selection.length === 0) return;
+    const patch: Partial<CanvasObject> = {};
+    for (const k of keys) (patch as any)[k] = undefined;
+    for (const obj of selection) updateObject(obj.id, patch);
   }
 
   // Derived state for geometry
@@ -194,22 +195,28 @@
     {/if}
 
     <!-- 2. Appearance (Fill & Stroke) -->
-    <!-- Shown for Empty (Defaults) OR Selection (except pure text, but Labels have fill) -->
     {#if selection.length <= 1 || selection.every((o) => o.type !== "text")}
       <div class="section">
-        <h4>Appearance</h4>
+        {#if selection.length === 0}
+          <h4 class="theme-header">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+            Global Theme
+          </h4>
+        {:else}
+          <h4>Appearance</h4>
+        {/if}
 
         <!-- Fill -->
         <div class="row items-center">
           <div class="color-swatch-wrapper">
             <input
               type="color"
-              value={defaultFillColor}
+              value={selection.length === 0 ? globalTheme.fillColor : getEffective("fill", "fillColor")}
               oninput={(e) => {
-                defaultFillColor = e.currentTarget.value;
-                if (selection.length > 0) {
-                  applyStyleToSelected("fill", defaultFillColor);
-                  onStyleChange?.("fill", defaultFillColor);
+                if (selection.length === 0) {
+                  globalTheme.fillColor = e.currentTarget.value;
+                } else {
+                  applyStyleToSelected("fill", e.currentTarget.value);
                 }
               }}
             />
@@ -217,16 +224,20 @@
           <span class="label">Fill</span>
           <input
             class="hex-input"
+            class:inherited={selection.length > 0 && !isOverridden("fill")}
             type="text"
-            value={defaultFillColor}
+            value={selection.length === 0 ? globalTheme.fillColor : getEffective("fill", "fillColor")}
             oninput={(e) => {
-              defaultFillColor = e.currentTarget.value;
-              if (selection.length > 0) {
-                applyStyleToSelected("fill", defaultFillColor);
-                onStyleChange?.("fill", defaultFillColor);
+              if (selection.length === 0) {
+                globalTheme.fillColor = e.currentTarget.value;
+              } else {
+                applyStyleToSelected("fill", e.currentTarget.value);
               }
             }}
           />
+          {#if selection.length > 0 && isOverridden("fill")}
+            <button class="reset-theme-btn" title="Reset to Theme" onclick={() => resetToTheme("fill")}>↩</button>
+          {/if}
         </div>
 
         <!-- Stroke -->
@@ -234,12 +245,12 @@
           <div class="color-swatch-wrapper">
             <input
               type="color"
-              value={defaultStrokeColor}
+              value={selection.length === 0 ? globalTheme.strokeColor : getEffective("stroke", "strokeColor")}
               oninput={(e) => {
-                defaultStrokeColor = e.currentTarget.value;
-                if (selection.length > 0) {
-                  applyStyleToSelected("stroke", defaultStrokeColor);
-                  onStyleChange?.("stroke", defaultStrokeColor);
+                if (selection.length === 0) {
+                  globalTheme.strokeColor = e.currentTarget.value;
+                } else {
+                  applyStyleToSelected("stroke", e.currentTarget.value);
                 }
               }}
             />
@@ -247,27 +258,35 @@
           <span class="label">Stroke</span>
           <input
             class="hex-input"
+            class:inherited={selection.length > 0 && !isOverridden("stroke")}
             type="text"
-            value={defaultStrokeColor}
+            value={selection.length === 0 ? globalTheme.strokeColor : getEffective("stroke", "strokeColor")}
             oninput={(e) => {
-              defaultStrokeColor = e.currentTarget.value;
-              if (selection.length > 0) {
-                applyStyleToSelected("stroke", defaultStrokeColor);
-                onStyleChange?.("stroke", defaultStrokeColor);
+              if (selection.length === 0) {
+                globalTheme.strokeColor = e.currentTarget.value;
+              } else {
+                applyStyleToSelected("stroke", e.currentTarget.value);
               }
             }}
           />
+          {#if selection.length > 0 && isOverridden("stroke")}
+            <button class="reset-theme-btn" title="Reset to Theme" onclick={() => resetToTheme("stroke")}>↩</button>
+          {/if}
         </div>
 
-        <!-- Stroke Properties -->
+        <!-- Stroke Width & Style -->
         <div class="row gap-2 mt-2">
           <label class="flex-1">
             <span>Width</span>
             <select
-              bind:value={defaultStrokeWidth}
-              onchange={() => {
-                applyStyleToSelected("strokeWidth", defaultStrokeWidth);
-                onStyleChange?.("strokeWidth", defaultStrokeWidth);
+              value={selection.length === 0 ? globalTheme.strokeWidth : getEffective("strokeWidth", "strokeWidth")}
+              onchange={(e) => {
+                const v = +e.currentTarget.value;
+                if (selection.length === 0) {
+                  globalTheme.strokeWidth = v;
+                } else {
+                  applyStyleToSelected("strokeWidth", v);
+                }
               }}
             >
               {#each [1, 2, 3, 4, 5, 8, 10] as width}
@@ -278,17 +297,18 @@
           <label class="flex-1">
             <span>Style</span>
             <select
-              value={getDashString(defaultLineDash)}
+              value={getDashString(selection.length === 0 ? globalTheme.lineDash : getEffective("lineDash", "lineDash"))}
               onchange={(e) => {
                 const val = e.currentTarget.value;
                 let dash: number[] = [];
                 if (val === "dashed") dash = [5, 5];
                 else if (val === "dotted") dash = [2, 3];
                 else if (val === "dashdot") dash = [8, 3, 2, 3];
-                defaultLineDash = dash;
-                defaultLineDash = dash;
-                applyStyleToSelected("lineDash", dash);
-                onStyleChange?.("lineDash", dash);
+                if (selection.length === 0) {
+                  globalTheme.lineDash = dash;
+                } else {
+                  applyStyleToSelected("lineDash", dash);
+                }
               }}
             >
               <option value="solid">Solid</option>
@@ -306,81 +326,97 @@
       <div class="section">
         <h4>Typography</h4>
         <div class="col gap-2">
-          <select
-            bind:value={defaultFontFamily}
-            onchange={() => {
-              applyFontToSelected("fontFamily", defaultFontFamily);
-              onStyleChange?.("fontFamily", defaultFontFamily);
-            }}
-          >
-            <optgroup label="Sans-serif">
-              <option value="Arial">Arial</option>
-              <option value="Helvetica">Helvetica</option>
-              <option value="Helvetica Neue">Helvetica Neue</option>
-              <option value="Calibri">Calibri</option>
-              <option value="Gill Sans">Gill Sans</option>
-              <option value="Verdana">Verdana</option>
-              <option value="Tahoma">Tahoma</option>
-              <option value="Myriad Pro">Myriad Pro</option>
-            </optgroup>
-            <optgroup label="Serif">
-              <option value="Times New Roman">Times New Roman</option>
-              <option value="Georgia">Georgia</option>
-              <option value="Palatino">Palatino</option>
-              <option value="Garamond">Garamond</option>
-              <option value="Book Antiqua">Book Antiqua</option>
-            </optgroup>
-            <optgroup label="Monospace">
-              <option value="Courier New">Courier New</option>
-              <option value="Consolas">Consolas</option>
-              <option value="Menlo">Menlo</option>
-              <option value="Monaco">Monaco</option>
-              <option value="Lucida Console">Lucida Console</option>
-            </optgroup>
-            <optgroup label="Scientific / Special">
-              <option value="STIX Two Text">STIX Two Text</option>
-              <option value="Computer Modern">Computer Modern</option>
-              <option value="Latin Modern">Latin Modern</option>
-              <option value="Symbol">Symbol</option>
-            </optgroup>
-          </select>
-
-          <div class="row gap-2">
+          <div class="row items-center gap-1">
             <select
-              class="flex-1"
-              bind:value={defaultFontSize}
-              onchange={() => {
-                applyFontToSelected("fontSize", defaultFontSize);
-                onStyleChange?.("fontSize", defaultFontSize);
+              style="flex:1"
+              value={selection.length === 0 ? globalTheme.fontFamily : getEffective("fontFamily", "fontFamily")}
+              onchange={(e) => {
+                if (selection.length === 0) {
+                  globalTheme.fontFamily = e.currentTarget.value;
+                } else {
+                  applyFontToSelected("fontFamily", e.currentTarget.value);
+                }
               }}
             >
-              {#each [8, 10, 11, 12, 14, 16, 18, 20, 24, 32, 48, 64, 72] as size}
-                <option value={size}>{size}pt</option>
-              {/each}
+              <optgroup label="Sans-serif">
+                <option value="Arial">Arial</option>
+                <option value="Helvetica">Helvetica</option>
+                <option value="Helvetica Neue">Helvetica Neue</option>
+                <option value="Calibri">Calibri</option>
+                <option value="Gill Sans">Gill Sans</option>
+                <option value="Verdana">Verdana</option>
+                <option value="Tahoma">Tahoma</option>
+                <option value="Myriad Pro">Myriad Pro</option>
+              </optgroup>
+              <optgroup label="Serif">
+                <option value="Times New Roman">Times New Roman</option>
+                <option value="Georgia">Georgia</option>
+                <option value="Palatino">Palatino</option>
+                <option value="Garamond">Garamond</option>
+                <option value="Book Antiqua">Book Antiqua</option>
+              </optgroup>
+              <optgroup label="Monospace">
+                <option value="Courier New">Courier New</option>
+                <option value="Consolas">Consolas</option>
+                <option value="Menlo">Menlo</option>
+                <option value="Monaco">Monaco</option>
+                <option value="Lucida Console">Lucida Console</option>
+              </optgroup>
+              <optgroup label="Scientific / Special">
+                <option value="STIX Two Text">STIX Two Text</option>
+                <option value="Computer Modern">Computer Modern</option>
+                <option value="Latin Modern">Latin Modern</option>
+                <option value="Symbol">Symbol</option>
+              </optgroup>
             </select>
+            {#if selection.length > 0 && isOverridden("fontFamily")}
+              <button class="reset-theme-btn" title="Reset to Theme" onclick={() => resetToTheme("fontFamily")}>↩</button>
+            {/if}
+          </div>
+
+          <div class="row gap-2">
+            <div class="row items-center gap-1 flex-1">
+              <select
+                style="flex:1"
+                value={selection.length === 0 ? globalTheme.fontSize : getEffective("fontSize", "fontSize")}
+                onchange={(e) => {
+                  const v = +e.currentTarget.value;
+                  if (selection.length === 0) {
+                    globalTheme.fontSize = v;
+                  } else {
+                    applyFontToSelected("fontSize", v);
+                  }
+                }}
+              >
+                {#each [8, 10, 11, 12, 14, 16, 18, 20, 24, 32, 48, 64, 72] as size}
+                  <option value={size}>{size}pt</option>
+                {/each}
+              </select>
+              {#if selection.length > 0 && isOverridden("fontSize")}
+                <button class="reset-theme-btn" title="Reset to Theme" onclick={() => resetToTheme("fontSize")}>↩</button>
+              {/if}
+            </div>
 
             <div class="row gap-0 bg-dark rounded">
               <button
-                class:active={defaultFontWeight === "bold"}
+                class="icon-btn text-bold"
+                class:active={selection.length === 0 ? false : getEffective("fontWeight", "fontWeight") === "bold"}
                 onclick={() => {
-                  defaultFontWeight =
-                    defaultFontWeight === "bold" ? "normal" : "bold";
-                  applyFontToSelected("fontWeight", defaultFontWeight);
-                  onStyleChange?.("fontWeight", defaultFontWeight);
+                  if (selection.length === 0) return;
+                  const cur = getEffective("fontWeight", "fontWeight");
+                  applyFontToSelected("fontWeight", cur === "bold" ? "normal" : "bold");
                 }}
-                title="Bold"
-                class="icon-btn text-bold">B</button
+                title="Bold">B</button
               >
               <button
-                class:active={defaultFontStyle === "italic"}
+                class="icon-btn text-italic"
+                class:active={selection.length === 0 ? false : getEffective("fontStyle", "fontStyle") === "italic"}
                 onclick={() => {
-                  defaultFontStyle =
-                    defaultFontStyle === "italic" ? "normal" : "italic";
-                  applyFontToSelected("fontStyle", defaultFontStyle);
-                  onStyleChange?.("fontStyle", defaultFontStyle);
+                  if (selection.length === 0) return;
+                  const cur = getEffective("fontStyle", "fontStyle");
+                  applyFontToSelected("fontStyle", cur === "italic" ? "normal" : "italic");
                 }}
-                title="Italic"
-                class="icon-btn text-italic">I</button
+                title="Italic">I</button
               >
             </div>
           </div>
@@ -403,7 +439,6 @@
                 checked={obj.arrowStart}
                 onchange={(e) => {
                   updateObject(obj.id, { arrowStart: e.currentTarget.checked });
-                  onStyleChange?.("arrowStart", e.currentTarget.checked);
                 }}
               />
               <span>Start</span>
@@ -414,7 +449,6 @@
                 checked={obj.arrowEnd}
                 onchange={(e) => {
                   updateObject(obj.id, { arrowEnd: e.currentTarget.checked });
-                  onStyleChange?.("arrowEnd", e.currentTarget.checked);
                 }}
               />
               <span>End</span>
@@ -430,7 +464,6 @@
                 updateObject(obj.id, {
                   arrowheadStyle: e.currentTarget.value as any,
                 });
-                onStyleChange?.("arrowheadStyle", e.currentTarget.value);
               }}
             >
               <option value="filled">Filled Triangle</option>
@@ -451,7 +484,6 @@
                   updateObject(obj.id, {
                     arrowFillColor: e.currentTarget.value,
                   });
-                  onStyleChange?.("arrowFillColor", e.currentTarget.value);
                 }}
               />
             </div>
@@ -586,7 +618,6 @@
             title="Reset brightness/contrast"
             onclick={() => {
               updateObject(obj.id, { brightness: 100, contrast: 100 });
-              onStyleChange?.("brightness", 100);
             }}
           >
             Reset
@@ -608,7 +639,6 @@
               oninput={(e) => {
                 const val = Number(e.currentTarget.value);
                 updateObject(obj.id, { brightness: val }, false);
-                onStyleChange?.("brightness", val);
               }}
               onchange={(e) => {
                 updateObject(
@@ -634,7 +664,6 @@
               oninput={(e) => {
                 const val = Number(e.currentTarget.value);
                 updateObject(obj.id, { contrast: val }, false);
-                onStyleChange?.("contrast", val);
               }}
               onchange={(e) => {
                 updateObject(
@@ -920,4 +949,45 @@
   }
 
   /* Alignment Grids */
+
+  /* ── Global Theme UI ─────────────────────────────────────── */
+  h4.theme-header {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: #5aabff;
+  }
+  h4.theme-header svg {
+    opacity: 0.8;
+  }
+
+  .reset-theme-btn {
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid #444;
+    color: #888;
+    border-radius: 3px;
+    width: 18px;
+    height: 18px;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.12s, color 0.12s;
+    padding: 0;
+  }
+  .reset-theme-btn:hover {
+    background: #3a3a3a;
+    color: #5aabff;
+    border-color: #5aabff;
+  }
+
+  /* Inputs showing an inherited (non-overridden) value */
+  input.inherited {
+    color: #888;
+    font-style: italic;
+    border-color: #333;
+  }
 </style>

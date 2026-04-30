@@ -1,4 +1,4 @@
-import type { CanvasObject } from '../types';
+import type { CanvasObject, GlobalTheme } from '../types';
 
 const filterCache = new Map<string, HTMLCanvasElement>();
 
@@ -54,7 +54,8 @@ function getFilteredImage(img: HTMLImageElement, b: number, c: number): HTMLImag
 export function drawObject(
   ctx: CanvasRenderingContext2D, 
   obj: CanvasObject, 
-  imageCache: Map<string, HTMLImageElement>
+  imageCache: Map<string, HTMLImageElement>,
+  theme: GlobalTheme
 ) {
   ctx.save();
 
@@ -87,7 +88,7 @@ export function drawObject(
   if (obj.type === "rectangle") {
     ctx.beginPath();
     ctx.rect(obj.x, obj.y, obj.width, obj.height);
-    ctx.fillStyle = obj.fill;
+    ctx.fillStyle = obj.fill ?? theme.fillColor;
     ctx.fill();
   } else if (obj.type === "ellipse") {
     ctx.beginPath();
@@ -100,7 +101,7 @@ export function drawObject(
       0,
       2 * Math.PI,
     );
-    ctx.fillStyle = obj.fill;
+    ctx.fillStyle = obj.fill ?? theme.fillColor;
     ctx.fill();
   } else if (obj.type === "arc") {
     const ecx = obj.x + obj.width / 2;
@@ -123,8 +124,9 @@ export function drawObject(
       // open arc — stroke only
       ctx.ellipse(ecx, ecy, rx, ry, 0, sa, ea);
     }
-    if (obj.fill && obj.fill !== "transparent" && closure !== "open") {
-      ctx.fillStyle = obj.fill;
+    const fill = obj.fill ?? theme.fillColor;
+    if (fill && fill !== "transparent" && closure !== "open") {
+      ctx.fillStyle = fill;
       ctx.fill();
     }
   } else if (obj.type === "line") {
@@ -136,23 +138,23 @@ export function drawObject(
     }
   } else if (obj.type === "label" && obj.text) {
     // Draw text
-    const fontSize = obj.fontSize || 24;
-    const fontWeight = obj.fontWeight || "bold";
-    const fontFamily = obj.fontFamily || "sans-serif";
+    const fontSize = obj.fontSize ?? theme.fontSize;
+    const fontWeight = obj.fontWeight ?? theme.fontWeight ?? "bold";
+    const fontFamily = obj.fontFamily ?? theme.fontFamily;
     ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
     ctx.textBaseline = "top";
-    ctx.fillStyle = obj.fill;
+    ctx.fillStyle = obj.fill ?? theme.strokeColor; // Labels use stroke color for text by default in scientific figures if no fill
     ctx.fillText(obj.text, obj.x, obj.y);
 
     const metrics = ctx.measureText(obj.text);
     obj.width = metrics.width;
     obj.height = fontSize;
   } else if (obj.type === "scalebar") {
-    const barHeight = obj.strokeWidth || 4;
-    const color = obj.fill || obj.stroke || "#000";
+    const barHeight = obj.strokeWidth ?? theme.strokeWidth;
+    const color = obj.fill ?? obj.stroke ?? theme.strokeColor;
     const label = `${obj.physicalLength || 0} ${obj.units || ""}`;
-    const fontSize = obj.fontSize || 14;
-    const fontFamily = obj.fontFamily || "Arial";
+    const fontSize = obj.fontSize ?? theme.fontSize;
+    const fontFamily = obj.fontFamily ?? theme.fontFamily;
     const labelPos = obj.labelPosition || "above";
 
     ctx.font = `normal ${fontSize}px ${fontFamily}`;
@@ -207,13 +209,13 @@ export function drawObject(
     ctx.restore();
     return; // Scalebar handles its own drawing completely
   } else if (obj.type === "text" && obj.text) {
-    const fontStyle = obj.fontStyle || "normal";
-    const fontWeight = obj.fontWeight || "normal";
-    const fontSize = obj.fontSize || 16;
-    const fontFamily = obj.fontFamily || "sans-serif";
+    const fontStyle = obj.fontStyle ?? theme.fontStyle ?? "normal";
+    const fontWeight = obj.fontWeight ?? theme.fontWeight ?? "normal";
+    const fontSize = obj.fontSize ?? theme.fontSize;
+    const fontFamily = obj.fontFamily ?? theme.fontFamily;
     ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
     ctx.textBaseline = "top";
-    ctx.fillStyle = obj.fill;
+    ctx.fillStyle = obj.fill ?? theme.strokeColor; // Text elements default to stroke color (usually black/dark) if no fill
     ctx.fillText(obj.text, obj.x, obj.y);
 
     // Measure text for selection box
@@ -223,7 +225,7 @@ export function drawObject(
   } else if (obj.type === "group" && obj.children) {
     // Recursively draw children
     for (const child of obj.children) {
-      drawObject(ctx, child, imageCache);
+      drawObject(ctx, child, imageCache, theme);
     }
     ctx.restore();
     return;
@@ -262,8 +264,9 @@ export function drawObject(
         ctx.closePath();
     }
     
-    if (obj.fill && obj.fill !== "transparent") {
-       ctx.fillStyle = obj.fill;
+    const fill = obj.fill ?? theme.fillColor;
+    if (fill && fill !== "transparent") {
+       ctx.fillStyle = fill;
        ctx.fill();
     }
   } else if (obj.type === "image" && obj.src) {
@@ -313,9 +316,9 @@ export function drawObject(
   } // end image
 
   if (obj.stroke || obj.type === "line") {
-    ctx.strokeStyle = obj.stroke || "#000";
-    ctx.lineWidth = obj.strokeWidth || 1;
-    ctx.setLineDash(obj.lineDash || []);
+    ctx.strokeStyle = obj.stroke ?? theme.strokeColor;
+    ctx.lineWidth = obj.strokeWidth ?? theme.strokeWidth;
+    ctx.setLineDash(obj.lineDash ?? theme.lineDash ?? []);
     ctx.stroke();
     ctx.setLineDash([]); // Reset to solid
   }
@@ -328,10 +331,10 @@ export function drawObject(
     obj.y2 !== undefined
   ) {
     const angle = Math.atan2(obj.y2 - obj.y, obj.x2 - obj.x);
-    const sw = obj.strokeWidth || 1;
+    const sw = obj.strokeWidth ?? theme.strokeWidth;
     const headLen = 10 * sw * 0.5 + 7;
     const style = obj.arrowheadStyle ?? "filled";
-    const strokeColor = obj.stroke || "#000";
+    const strokeColor = obj.stroke ?? theme.strokeColor;
     const fillColor = obj.arrowFillColor ?? strokeColor;
 
     function drawHead(tipX: number, tipY: number, ang: number) {

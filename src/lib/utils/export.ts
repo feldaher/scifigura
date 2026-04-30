@@ -1,4 +1,4 @@
-import type { CanvasObject } from '../types';
+import type { CanvasObject, GlobalTheme } from '../types';
 import { drawObject } from './render';
 import { jsPDF } from 'jspdf';
 import 'svg2pdf.js';
@@ -21,7 +21,8 @@ export interface ExportOptions {
 export async function exportCanvas(
   objects: CanvasObject[],
   options: ExportOptions,
-  imageCache: Map<string, HTMLImageElement>
+  imageCache: Map<string, HTMLImageElement>,
+  theme: GlobalTheme
 ): Promise<Blob | null> {
   // 1. Calculate Bounding Box
   let minX = Infinity,
@@ -77,18 +78,19 @@ export async function exportCanvas(
   if (width <= 0 || height <= 0) return null;
 
   if (options.format === 'svg') {
-    return exportSVG(objects, { minX, minY, width, height });
+    return exportSVG(objects, { minX, minY, width, height }, theme);
   } else if (options.format === 'pdf') {
-    return exportPDF(objects, { minX, minY, width, height }, options.dpi);
+    return exportPDF(objects, { minX, minY, width, height }, options.dpi, theme);
   } else {
-    return exportRaster(objects, { minX, minY, width, height }, options, imageCache);
+    return exportRaster(objects, { minX, minY, width, height }, options, imageCache, theme);
   }
 }
 
 async function exportPDF(
     objects: CanvasObject[], 
     bounds: { minX: number, minY: number, width: number, height: number },
-    dpi: number
+    dpi: number,
+    theme: GlobalTheme
 ): Promise<Blob> {
     const { minX, minY, width, height } = bounds;
     
@@ -121,7 +123,7 @@ async function exportPDF(
         return obj;
     }));
 
-    const svgBlob = exportSVG(clonedObjects, bounds);
+    const svgBlob = exportSVG(clonedObjects, bounds, theme);
     const svgText = await svgBlob.text();
     
     const parser = new DOMParser();
@@ -146,7 +148,8 @@ async function exportPDF(
 
 function exportSVG(
     objects: CanvasObject[], 
-    bounds: { minX: number, minY: number, width: number, height: number }
+    bounds: { minX: number, minY: number, width: number, height: number },
+    theme: GlobalTheme
 ): Blob {
     const { minX, minY, width, height } = bounds;
     
@@ -175,10 +178,10 @@ function exportSVG(
 
       let content = "";
       if (o.type === "rectangle") {
-        content = `<rect x="${o.x}" y="${o.y}" width="${o.width}" height="${o.height}" fill="${o.fill}" stroke="${o.stroke || "none"}" stroke-width="${o.strokeWidth || 0}"${transform} />`;
+        content = `<rect x="${o.x}" y="${o.y}" width="${o.width}" height="${o.height}" fill="${o.fill ?? theme.fillColor}" stroke="${o.stroke ?? theme.strokeColor}" stroke-width="${o.strokeWidth ?? theme.strokeWidth}"${transform} />`;
       } else if (o.type === "ellipse") {
         // Ellipse in SVG uses cx, cy
-        content = `<ellipse cx="${o.x + o.width / 2}" cy="${o.y + o.height / 2}" rx="${o.width / 2}" ry="${o.height / 2}" fill="${o.fill}" stroke="${o.stroke || "none"}" stroke-width="${o.strokeWidth || 0}"${transform} />`;
+        content = `<ellipse cx="${o.x + o.width / 2}" cy="${o.y + o.height / 2}" rx="${o.width / 2}" ry="${o.height / 2}" fill="${o.fill ?? theme.fillColor}" stroke="${o.stroke ?? theme.strokeColor}" stroke-width="${o.strokeWidth ?? theme.strokeWidth}"${transform} />`;
       } else if (o.type === "arc") {
         const ecx = o.x + o.width / 2;
         const ecy = o.y + o.height / 2;
@@ -199,7 +202,7 @@ function exportSVG(
         let d = `M ${x1} ${y1} A ${rx} ${ry} 0 ${largeArc} 1 ${x2} ${y2}`;
         if (closure === "pie") d = `M ${ecx} ${ecy} L ${x1} ${y1} A ${rx} ${ry} 0 ${largeArc} 1 ${x2} ${y2} Z`;
         else if (closure === "chord") d += " Z";
-        content = `<path d="${d}" fill="${closure === "open" ? "none" : o.fill}" stroke="${o.stroke || "none"}" stroke-width="${o.strokeWidth || 0}"${transform} />`;
+        content = `<path d="${d}" fill="${closure === "open" ? "none" : (o.fill ?? theme.fillColor)}" stroke="${o.stroke ?? theme.strokeColor}" stroke-width="${o.strokeWidth ?? theme.strokeWidth}"${transform} />`;
       } else if (o.type === "line") {
 
         const x2 = o.x2 ?? o.x;
@@ -217,7 +220,7 @@ function exportSVG(
              transform = ` transform="rotate(${deg}, ${cx}, ${cy})"`;
         }
 
-        content = `<line x1="${o.x}" y1="${o.y}" x2="${x2}" y2="${y2}" stroke="${o.stroke || "black"}" stroke-width="${o.strokeWidth || 2}"${transform} />`;
+        content = `<line x1="${o.x}" y1="${o.y}" x2="${x2}" y2="${y2}" stroke="${o.stroke ?? theme.strokeColor}" stroke-width="${o.strokeWidth ?? theme.strokeWidth}"${transform} />`;
         
         // Arrowheads - tricky in SVG without defs/markers.
         // Manual polygon drawing like in render.ts
@@ -228,22 +231,22 @@ function exportSVG(
              // Or just append them.
              // If we rely on `transform` on the line element, the arrowhead polygon must ALSO have the same transform.
              
-             const headLen = 10 * (o.strokeWidth || 1) * 0.5 + 5;
+             const headLen = 10 * (o.strokeWidth ?? theme.strokeWidth) * 0.5 + 5;
              const ax1 = x2 - headLen * Math.cos(angle - Math.PI / 6);
              const ay1 = y2 - headLen * Math.sin(angle - Math.PI / 6);
              const ax2 = x2 - headLen * Math.cos(angle + Math.PI / 6);
              const ay2 = y2 - headLen * Math.sin(angle + Math.PI / 6);
              
-             content += `\n<polygon points="${x2},${y2} ${ax1},${ay1} ${ax2},${ay2}" fill="${o.stroke || "black"}"${transform} />`;
+             content += `\n<polygon points="${x2},${y2} ${ax1},${ay1} ${ax2},${ay2}" fill="${o.arrowFillColor ?? o.stroke ?? theme.strokeColor}"${transform} />`;
         }
         if (o.arrowStart) {
              const angle = Math.atan2(y2 - o.y, x2 - o.x);
-             const headLen = 10 * (o.strokeWidth || 1) * 0.5 + 5;
+             const headLen = 10 * (o.strokeWidth ?? theme.strokeWidth) * 0.5 + 5;
              const ax1 = o.x + headLen * Math.cos(angle - Math.PI / 6);
              const ay1 = o.y + headLen * Math.sin(angle - Math.PI / 6);
              const ax2 = o.x + headLen * Math.cos(angle + Math.PI / 6);
-             const ay2 = o.y + headLen * Math.sin(angle + Math.PI / 6);
-             content += `\n<polygon points="${o.x},${o.y} ${ax1},${ay1} ${ax2},${ay2}" fill="${o.stroke || "black"}"${transform} />`;
+             const ay2 = o.y + Math.sin(angle + Math.PI / 6) * headLen; // Corrected typon
+             content += `\n<polygon points="${o.x},${o.y} ${ax1},${ay1} ${ax2},${ay2}" fill="${o.arrowFillColor ?? o.stroke ?? theme.strokeColor}"${transform} />`;
         }
         
       } else if (o.type === "path" && o.pathNodes && o.pathNodes.length > 0) {
@@ -273,27 +276,28 @@ function exportSVG(
             }
             d += " Z";
         }
-        content = `<path d="${d}" fill="${o.fill || "transparent"}" stroke="${o.stroke || "none"}" stroke-width="${o.strokeWidth || 0}"${transform} />`;
+        content = `<path d="${d}" fill="${o.fill ?? theme.fillColor}" stroke="${o.stroke ?? theme.strokeColor}" stroke-width="${o.strokeWidth ?? theme.strokeWidth}"${transform} />`;
       } else if (o.type === "text" && o.text) {
-        content = `<text x="${o.x}" y="${o.y}" font-family="${o.fontFamily}" font-size="${o.fontSize}" font-weight="${o.fontWeight}" font-style="${o.fontStyle}" fill="${o.fill}" dominant-baseline="hanging"${transform}>${o.text}</text>`;
+        content = `<text x="${o.x}" y="${o.y}" font-family="${o.fontFamily ?? theme.fontFamily}" font-size="${o.fontSize ?? theme.fontSize}" font-weight="${o.fontWeight ?? theme.fontWeight ?? "normal"}" font-style="${o.fontStyle ?? theme.fontStyle ?? "normal"}" fill="${o.fill ?? theme.strokeColor}" dominant-baseline="hanging"${transform}>${o.text}</text>`;
       } else if (o.type === "label" && o.text) {
           // Label is just text
-          const fontSize = o.fontSize || 24;
-          const fontWeight = o.fontWeight || "bold";
-          content = `<text x="${o.x}" y="${o.y}" font-family="${o.fontFamily ?? "sans-serif"}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${o.fill}" dominant-baseline="hanging"${transform}>${o.text}</text>`;
+          const fontSize = o.fontSize ?? theme.fontSize;
+          const fontWeight = o.fontWeight ?? theme.fontWeight ?? "bold";
+          content = `<text x="${o.x}" y="${o.y}" font-family="${o.fontFamily ?? theme.fontFamily}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${o.fill ?? theme.strokeColor}" dominant-baseline="hanging"${transform}>${o.text}</text>`;
       } else if (o.type === "scalebar") {
           // Scalebar group: rect + text
-          const barH = o.strokeWidth || 4;
-          const color = o.stroke || "#000";
+          const barH = o.strokeWidth ?? theme.strokeWidth;
+          const color = o.stroke ?? theme.strokeColor;
           content = `<rect x="${o.x}" y="${o.y + o.height - barH}" width="${o.width}" height="${barH}" fill="${color}"${transform} />`;
           
           if (o.labelPosition !== "none") {
              const label = `${o.physicalLength} ${o.units || "units"}`;
-             const fSize = o.fontSize || 14;
+             const fSize = o.fontSize ?? theme.fontSize;
+             const fFamily = o.fontFamily ?? theme.fontFamily;
              // Text centered above
              const tx = o.x + o.width / 2;
              const ty = o.y + o.height - barH - 2;
-             content += `\n<text x="${tx}" y="${ty}" font-family="Arial" font-size="${fSize}" fill="${color}" text-anchor="middle"${transform}>${label}</text>`;
+             content += `\n<text x="${tx}" y="${ty}" font-family="${fFamily}" font-size="${fSize}" fill="${color}" text-anchor="middle"${transform}>${label}</text>`;
           }
       } else if (o.type === "image" && o.src) {
         // Embed image as base64?
@@ -317,7 +321,8 @@ async function exportRaster(
     objects: CanvasObject[], 
     bounds: { minX: number, minY: number, width: number, height: number },
     options: ExportOptions,
-    imageCache: Map<string, HTMLImageElement>
+    imageCache: Map<string, HTMLImageElement>,
+    theme: GlobalTheme
 ): Promise<Blob | null> {
     const { minX, minY, width, height } = bounds;
     
@@ -345,7 +350,7 @@ async function exportRaster(
     }
     
     // Render
-    objects.forEach(obj => drawObject(ctx, obj, imageCache));
+    objects.forEach(obj => drawObject(ctx, obj, imageCache, theme));
     
     if (options.format === 'tiff') {
         const imageData = ctx.getImageData(0, 0, w, h);
