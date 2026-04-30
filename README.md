@@ -99,11 +99,11 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 Scientific Figure Studio is being built in 6 milestones:
 
 1. **Bootstrap** ✅ — Project setup, CI, documentation
-2. **Canvas Foundation** — Zoomable canvas, shapes, rulers
-3. **Layout & Styles** — Multi-panel layouts, global styles
-4. **Scientific Features** — Scale bars, panel labels, journal presets
-5. **Import/Export** — Save/load projects, PDF export
-6. **Polish & Beta** — Cross-platform builds, user guide
+2. **Canvas Foundation** ✅ — Zoomable canvas, shapes, rulers
+3. **Layout & Styles** ✅ — Multi-panel layouts, global styles
+4. **Scientific Features** ✅ — Scale bars, panel labels, journal presets
+5. **Import/Export** ✅ — Save/load projects, PDF export
+6. **Polish & Beta** ✅ — Cross-platform builds, user guide
 
 Full roadmap: [45 issues across 6 milestones](https://github.com/feldaher/scifigura/milestones)
 
