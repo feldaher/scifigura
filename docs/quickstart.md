@@ -1,5 +1,9 @@
-# SciFigura Quick-Start Guide
+---
+layout: default
+title: Quickstart
+---
 
+# SciFigura Quick-Start Guide
 > **SciFigura** is a free, open-source desktop app for creating publication-ready scientific figures. This guide walks you through building a complete 4-panel figure from scratch.
 
 ---
