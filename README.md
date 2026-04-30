@@ -7,7 +7,7 @@
 
 Free, open-source desktop application for creating publication-ready scientific figures.
 
-📖 **[Quick-Start Guide](docs/quickstart.md)** — get from install to a complete 4-panel figure in minutes.
+🌐 **[Visit the Website](https://feldaher.github.io/scifigura/)** | 📖 **[Quick-Start Guide](https://feldaher.github.io/scifigura/quickstart.html)**
 
 ## Overview
 
