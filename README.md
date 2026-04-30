@@ -1,4 +1,4 @@
-# Scientific Figure Studio
+# SciFigura
 
 [![CI](https://github.com/feldaher/scifigura/actions/workflows/ci.yml/badge.svg)](https://github.com/feldaher/scifigura/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -11,7 +11,7 @@ Free, open-source desktop application for creating publication-ready scientific 
 
 ## Overview
 
-Scientific Figure Studio addresses critical pain points in scientific publishing:
+Scientific Figure Studio (SciFigura) addresses critical pain points in scientific publishing:
 
 - **Consistency enforcement** — Global styles eliminate hours of manual formatting
 - **Journal-aware reformatting** — One-click adaptation to different journal requirements
@@ -68,12 +68,20 @@ pnpm check
 pnpm lint
 ```
 
+## Downloads
+
+[![Download for macOS](https://img.shields.io/badge/macOS-Download-apple?style=for-the-badge&logo=apple)](https://github.com/feldaher/scifigura/releases/latest)
+[![Download for Windows](https://img.shields.io/badge/Windows-Download-blue?style=for-the-badge&logo=windows)](https://github.com/feldaher/scifigura/releases/latest)
+[![Download for Linux](https://img.shields.io/badge/Linux-Download-orange?style=for-the-badge&logo=linux)](https://github.com/feldaher/scifigura/releases/latest)
+
+You can download the latest installer for your platform from the [Releases page](https://github.com/feldaher/scifigura/releases/latest).
+
 ## Project Status
 
-🚧 **MVP in Development** — Following the [6-month roadmap](https://github.com/feldaher/scifigura/milestones)
+🚀 **Beta / Initial Release** — We have reached the Beta stage with our first release!
 
-**Current Milestone:** 5 - Expert/Import 📥
-**Next Up:** Polish & Beta (Cross-platform builds, user guide)
+**Current Milestone:** 6 - Polish & Beta 🛠️
+**Next Up:** Bug fixes and 1.0 stability
 
 See [open issues](https://github.com/feldaher/scifigura/issues) for detailed task breakdown.
 
