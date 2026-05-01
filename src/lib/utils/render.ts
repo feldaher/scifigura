@@ -315,8 +315,12 @@ export function drawObject(
     }
   } // end image
 
-  if (obj.stroke || obj.type === "line") {
-    ctx.strokeStyle = obj.stroke ?? theme.strokeColor;
+  // Resolve effective stroke — must do this BEFORE the guard so theme fallbacks work
+  const strokeableTypes = ["rectangle", "ellipse", "arc", "line", "path"];
+  const effectiveStroke = obj.stroke ?? (strokeableTypes.includes(obj.type) ? theme.strokeColor : undefined);
+
+  if (effectiveStroke) {
+    ctx.strokeStyle = effectiveStroke;
     ctx.lineWidth = obj.strokeWidth ?? theme.strokeWidth;
     ctx.setLineDash(obj.lineDash ?? theme.lineDash ?? []);
     ctx.stroke();
