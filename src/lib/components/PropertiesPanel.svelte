@@ -12,6 +12,7 @@
     applyStyleToSelected,
     applyFontToSelected,
     applyStyleToAllScaleBars,
+    applyThemeToAll,
     resetLabelSequence,
   }: {
     selection: CanvasObject[];
@@ -26,6 +27,7 @@
     applyStyleToSelected: (prop: any, val: any) => void;
     applyFontToSelected: (prop: any, val: any) => void;
     applyStyleToAllScaleBars?: (source: CanvasObject) => void;
+    applyThemeToAll?: () => void;
     resetLabelSequence?: () => void;
   } = $props();
 
@@ -198,10 +200,25 @@
     {#if selection.length <= 1 || selection.every((o) => o.type !== "text")}
       <div class="section">
         {#if selection.length === 0}
-          <h4 class="theme-header">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-            Global Theme
-          </h4>
+          <div class="theme-header-row">
+            <h4 class="theme-header">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+              Global Theme
+            </h4>
+            {#if applyThemeToAll}
+              <button
+                class="apply-all-btn"
+                title="Clear all per-object style overrides so every object inherits from this theme"
+                onclick={() => {
+                  if (confirm("Apply theme to all objects? This will remove all individual style overrides.")) {
+                    applyThemeToAll?.();
+                  }
+                }}
+              >
+                Apply to All
+              </button>
+            {/if}
+          </div>
         {:else}
           <h4>Appearance</h4>
         {/if}
@@ -951,14 +968,40 @@
   /* Alignment Grids */
 
   /* ── Global Theme UI ─────────────────────────────────────── */
+  .theme-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
   h4.theme-header {
     display: flex;
     align-items: center;
     gap: 5px;
     color: #5aabff;
+    margin-bottom: 0;
   }
   h4.theme-header svg {
     opacity: 0.8;
+  }
+
+  .apply-all-btn {
+    background: transparent;
+    border: 1px solid #5aabff44;
+    color: #5aabff;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.3px;
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .apply-all-btn:hover {
+    background: #5aabff22;
+    border-color: #5aabff88;
   }
 
   .reset-theme-btn {

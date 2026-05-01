@@ -3632,6 +3632,23 @@
     if (changed) saveHistory();
   }
 
+  /**
+   * Strips all explicit style overrides from every object so they
+   * all inherit from the current globalTheme.
+   */
+  function applyThemeToAll() {
+    const styleKeys: (keyof CanvasObject)[] = [
+      "fill", "stroke", "strokeWidth", "lineDash",
+      "fontFamily", "fontSize", "fontWeight", "fontStyle"
+    ];
+    for (const obj of objects) {
+      for (const k of styleKeys) {
+        (obj as any)[k] = undefined;
+      }
+    }
+    saveHistory();
+  }
+
   function handleDoubleClick(e: MouseEvent) {
     if (mode === "draw_path" && pendingObject && pendingObject.pathNodes && pendingObject.pathNodes.length > 0) {
       objects = [...objects, pendingObject];
@@ -5885,6 +5902,7 @@
     {applyStyleToSelected}
     {applyFontToSelected}
     {applyStyleToAllScaleBars}
+    {applyThemeToAll}
     {resetLabelSequence}
   />
 
