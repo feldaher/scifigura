@@ -5,26 +5,44 @@
     issues = [],
     onSelect,
   }: { issues: ValidationIssue[]; onSelect: (id: string) => void } = $props();
+
+  let isExpanded = $state(true);
 </script>
 
 {#if issues.length > 0}
-  <div class="validation-panel">
-    <div class="header">
-      <h4>Journal Validation</h4>
+  <div class="validation-panel {isExpanded ? 'expanded' : 'collapsed'}">
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="header" onclick={() => isExpanded = !isExpanded} title={isExpanded ? "Collapse warnings" : "Show journal warnings"}>
+      <div class="header-left">
+        <svg class="chevron" class:open={isExpanded} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="18 15 12 9 6 15"></polyline>
+        </svg>
+        {#if isExpanded}
+          <h4>Journal Validation</h4>
+        {/if}
+      </div>
       <span class="badge {issues.some((i) => i.type === 'error') ? 'error' : 'warning'}">
-        {issues.length} {issues.length === 1 ? 'Issue' : 'Issues'}
+        {#if isExpanded}
+          {issues.length} {issues.length === 1 ? 'Issue' : 'Issues'}
+        {:else}
+          {issues.length}
+        {/if}
       </span>
     </div>
-    <ul class="issue-list">
-      {#each issues as issue (issue.id)}
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <li class="issue-item {issue.type}" onclick={() => onSelect(issue.objectId)}>
-          <span class="icon">{issue.type === "error" ? "❌" : "⚠️"}</span>
-          <span class="message">{issue.message}</span>
-        </li>
-      {/each}
-    </ul>
+    
+    {#if isExpanded}
+      <ul class="issue-list">
+        {#each issues as issue (issue.id)}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <li class="issue-item {issue.type}" onclick={() => onSelect(issue.objectId)}>
+            <span class="icon">{issue.type === "error" ? "❌" : "⚠️"}</span>
+            <span class="message">{issue.message}</span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </div>
 {/if}
 
@@ -35,10 +53,7 @@
     left: 20px;
     background: #1e1e1e;
     border: 1px solid #333;
-    border-radius: 8px;
     color: #e0e0e0;
-    width: 320px;
-    max-height: 250px;
     display: flex;
     flex-direction: column;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
@@ -47,6 +62,19 @@
       system-ui,
       -apple-system,
       sans-serif;
+    transition: width 0.2s, border-radius 0.2s;
+  }
+
+  .validation-panel.expanded {
+    width: 320px;
+    max-height: 250px;
+    border-radius: 8px;
+  }
+
+  .validation-panel.collapsed {
+    width: auto;
+    border-radius: 20px;
+    background: #2a2a2a;
   }
 
   .header {
@@ -56,7 +84,32 @@
     padding: 10px 15px;
     background: #2a2a2a;
     border-radius: 8px 8px 0 0;
+    cursor: pointer;
+    user-select: none;
+    gap: 10px;
+  }
+
+  .validation-panel.expanded .header {
     border-bottom: 1px solid #444;
+  }
+
+  .validation-panel.collapsed .header {
+    border-radius: 20px;
+    padding: 6px 12px;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .chevron {
+    transition: transform 0.2s;
+    color: #888;
+  }
+  .chevron.open {
+    transform: rotate(180deg);
   }
 
   h4 {
