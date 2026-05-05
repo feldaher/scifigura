@@ -113,7 +113,7 @@
         title="Arc / Pie Tool (W)"
       >
         <!-- Pie slice icon: arc + two radii to center -->
-        <svg width="24" height="24" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2">
+        <svg width="24" height="24" viewBox="2 2 20 20" stroke="currentColor" fill="none" stroke-width="1.8">
           <path d="M12 12 L20.5 7.5 A9.5 9.5 0 0 1 20.5 16.5 Z" />
           <path d="M12 12 L12 2.5 A9.5 9.5 0 0 1 20.5 7.5" opacity="0.4"/>
         </svg>
@@ -266,7 +266,7 @@
   .group {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
     width: 100%;
     align-items: center;
   }
@@ -297,7 +297,7 @@
   button.active {
     background: rgba(33, 150, 243, 0.15);
     color: #fff;
-    box-shadow: inset 2px 0 0 #2196f3;
+    box-shadow: inset 0 0 0 1px #2196f3;
   }
 
   button svg {
