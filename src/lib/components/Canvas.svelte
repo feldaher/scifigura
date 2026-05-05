@@ -410,6 +410,10 @@
   let resolvedW = $derived(paperKey === "custom" ? customPaperW : paperW);
   let resolvedH = $derived(paperKey === "custom" ? customPaperH : paperH);
 
+  // Validation state
+  let dismissedIssues = $state<Set<string>>(new Set());
+  let showValidationDropdown = $state(false);
+
   // Real-time journal constraints checker
   let validationIssues = $derived.by(() => {
     const issues: ValidationIssue[] = [];
@@ -431,24 +435,46 @@
       }
       
       if (outOfBounds) {
-        issues.push({ id: crypto.randomUUID(), objectId: obj.id, type: "warning", message: `Object extends outside Canvas margins.` });
+        const issueId = `${obj.id}_bounds`;
+        if (!dismissedIssues.has(issueId)) {
+          issues.push({ id: issueId, objectId: obj.id, type: "warning", message: `Object extends outside Canvas margins.` });
+        }
       }
 
       if ((obj.type === "text" || obj.type === "label") && minFontSize > 0) {
         if ((obj.fontSize || 0) < minFontSize) {
-          issues.push({ id: crypto.randomUUID(), objectId: obj.id, type: "error", message: `Text size (${obj.fontSize}pt) is below preset minimum (${minFontSize}pt).` });
+          const issueId = `${obj.id}_font`;
+          if (!dismissedIssues.has(issueId)) {
+            issues.push({ id: issueId, objectId: obj.id, type: "error", message: `Text size (${obj.fontSize}pt) is below preset minimum (${minFontSize}pt).` });
+          }
         }
       }
 
       if (obj.type === "image" && obj.naturalWidth && obj.width > 0) {
         const effectiveDpi = (obj.naturalWidth / obj.width) * 72;
         if (effectiveDpi && effectiveDpi < 300) {
-          issues.push({ id: crypto.randomUUID(), objectId: obj.id, type: "warning", message: `Image degraded. Effective resolution (~${Math.round(effectiveDpi)} DPI) is below 300 DPI standard.` });
+          const issueId = `${obj.id}_dpi`;
+          if (!dismissedIssues.has(issueId)) {
+            issues.push({ id: issueId, objectId: obj.id, type: "warning", message: `Image degraded. Effective resolution (~${Math.round(effectiveDpi)} DPI) is below 300 DPI standard.` });
+          }
         }
       }
     }
     return issues;
   });
+
+  function dismissIssue(id: string) {
+    dismissedIssues.add(id);
+    dismissedIssues = new Set(dismissedIssues); // Trigger reactivity
+  }
+
+  function dismissAllIssues() {
+    for (const issue of validationIssues) {
+      dismissedIssues.add(issue.id);
+    }
+    dismissedIssues = new Set(dismissedIssues);
+    showValidationDropdown = false;
+  }
 
   function handleValidationSelect(objectId: string) {
     selectedIds.clear();
@@ -5031,6 +5057,37 @@
       <!-- Spacer -->
       <div style="flex: 1;"></div>
 
+      <!-- Notifications Bell -->
+      <div class="menu-group" style="position:relative;">
+        <button
+          onclick={() => (showValidationDropdown = !showValidationDropdown)}
+          class="icon-btn"
+          title="Validation Notifications"
+          style="position: relative;"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+          </svg>
+          {#if validationIssues.length > 0}
+            <span style="position: absolute; top: -2px; right: -2px; background: #f44336; color: white; border-radius: 50%; font-size: 9px; width: 14px; height: 14px; display: flex; align-items: center; justify-content: center; font-weight: bold;">
+              {validationIssues.length}
+            </span>
+          {/if}
+        </button>
+
+        {#if showValidationDropdown}
+          <ValidationPanel 
+            issues={validationIssues} 
+            onSelect={handleValidationSelect} 
+            onDismiss={dismissIssue}
+            onDismissAll={dismissAllIssues}
+          />
+        {/if}
+      </div>
+
+      <div class="divider-v"></div>
+
       <div class="menu-group">
         <!-- Zoom Controls -->
         <button
@@ -5906,7 +5963,6 @@
     {resetLabelSequence}
   />
 
-  <ValidationPanel issues={validationIssues} onSelect={handleValidationSelect} />
 </div>
 
 <style>
