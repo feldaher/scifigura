@@ -3624,6 +3624,7 @@
     selectedIds = new Set();
     history = [];
     historyIndex = -1;
+    resetLabelSequence();
   }
 
   function handleKeyUp(event: KeyboardEvent) {
