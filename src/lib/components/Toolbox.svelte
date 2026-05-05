@@ -286,6 +286,7 @@
       background 0.1s,
       color 0.1s;
     position: relative;
+    padding: 0;
   }
 
   button:hover {
