@@ -86,8 +86,11 @@
     if (!dash || dash.length === 0) return "solid";
     if (dash.length === 2 && dash[0] === 5 && dash[1] === 5) return "dashed";
     if (dash.length === 2 && dash[0] === 2 && dash[1] === 3) return "dotted";
-    return "dashdot"; // rough approx
+    return "dashdot";
   }
+
+  // Inline confirmation state for "Apply to All"
+  let confirmingApplyAll = $state(false);
 </script>
 
 <aside class="properties-panel">
@@ -206,17 +209,29 @@
               Global Theme
             </h4>
             {#if applyThemeToAll}
-              <button
-                class="apply-all-btn"
-                title="Clear all per-object style overrides so every object inherits from this theme"
-                onclick={() => {
-                  if (confirm("Apply theme to all objects? This will remove all individual style overrides.")) {
-                    applyThemeToAll?.();
-                  }
-                }}
-              >
-                Apply to All
-              </button>
+              {#if confirmingApplyAll}
+                <span class="confirm-inline">
+                  <span class="confirm-label">Sure?</span>
+                  <button
+                    class="confirm-yes"
+                    title="Yes, apply theme to all objects"
+                    onclick={() => { applyThemeToAll?.(); confirmingApplyAll = false; }}
+                  >✓</button>
+                  <button
+                    class="confirm-no"
+                    title="Cancel"
+                    onclick={() => { confirmingApplyAll = false; }}
+                  >✕</button>
+                </span>
+              {:else}
+                <button
+                  class="apply-all-btn"
+                  title="Clear all per-object style overrides so every object inherits from this theme"
+                  onclick={() => { confirmingApplyAll = true; }}
+                >
+                  Apply to All
+                </button>
+              {/if}
             {/if}
           </div>
         {:else}
@@ -1002,6 +1017,50 @@
   .apply-all-btn:hover {
     background: #5aabff22;
     border-color: #5aabff88;
+  }
+
+  .confirm-inline {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .confirm-label {
+    font-size: 10px;
+    color: #aaa;
+    white-space: nowrap;
+  }
+  .confirm-yes,
+  .confirm-no {
+    width: 20px;
+    height: 20px;
+    border-radius: 3px;
+    border: 1px solid;
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
+    transition: background 0.12s;
+  }
+  .confirm-yes {
+    background: transparent;
+    border-color: #4caf5066;
+    color: #4caf50;
+  }
+  .confirm-yes:hover {
+    background: #4caf5022;
+    border-color: #4caf5099;
+  }
+  .confirm-no {
+    background: transparent;
+    border-color: #f4433666;
+    color: #f44336;
+  }
+  .confirm-no:hover {
+    background: #f4433622;
+    border-color: #f4433699;
   }
 
   .reset-theme-btn {
