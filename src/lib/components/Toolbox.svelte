@@ -32,7 +32,7 @@
 
     <Tooltip label="Pan" shortcut="Space">
       <button
-        class:active={isPanToolActive}
+        class:active={mode === "pan" || isPanToolActive}
         onclick={() => setMode("pan")}
         title="Pan Tool (Space)"
       >
@@ -112,10 +112,10 @@
         onclick={() => setMode("draw_arc")}
         title="Arc / Pie Tool (W)"
       >
-        <!-- Pie slice icon: arc + two radii to center -->
-        <svg width="24" height="24" viewBox="2 2 20 20" stroke="currentColor" fill="none" stroke-width="1.8">
-          <path d="M12 12 L20.5 7.5 A9.5 9.5 0 0 1 20.5 16.5 Z" />
-          <path d="M12 12 L12 2.5 A9.5 9.5 0 0 1 20.5 7.5" opacity="0.4"/>
+        <!-- Pie chart icon -->
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path>
+          <path d="M22 12A10 10 0 0 0 12 2v10z"></path>
         </svg>
       </button>
     </Tooltip>
