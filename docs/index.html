@@ -89,18 +89,22 @@
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="mx-auto max-w-2xl sm:text-center">
                 <h2 class="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">Download SciFigura</h2>
-                <p class="mt-6 text-lg leading-8 text-slate-600">Direct downloads for the latest version (v0.1.1).</p>
+                <p id="download-subtitle" class="mt-6 text-lg leading-8 text-slate-600">Loading latest release…</p>
             </div>
 
             <div class="mx-auto mt-12 max-w-3xl">
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div id="download-loading" class="rounded-2xl bg-white p-6 ring-1 ring-slate-200 shadow-sm">
+                    <p class="text-sm text-slate-600">Fetching the latest published release from GitHub…</p>
+                </div>
+
+                <div id="download-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-4 hidden">
                     <!-- macOS -->
                     <div class="rounded-2xl bg-white p-6 ring-1 ring-slate-200 shadow-sm">
                         <h3 class="text-lg font-semibold text-slate-900">macOS</h3>
                         <p class="mt-1 text-sm text-slate-600">Choose your CPU architecture.</p>
                         <div class="mt-4 flex flex-col gap-3">
-                            <a class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="https://github.com/feldaher/scifigura/releases/download/v0.1.1/SciFigura_0.1.1_x64.dmg">Download for Intel (x64)</a>
-                            <a class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="https://github.com/feldaher/scifigura/releases/download/v0.1.1/SciFigura_0.1.1_aarch64.dmg">Download for Apple Silicon (arm64)</a>
+                            <a id="dl-macos-x64" class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="#" rel="nofollow">Download for Intel (x64)</a>
+                            <a id="dl-macos-arm64" class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="#" rel="nofollow">Download for Apple Silicon (arm64)</a>
                         </div>
                     </div>
 
@@ -109,8 +113,8 @@
                         <h3 class="text-lg font-semibold text-slate-900">Windows</h3>
                         <p class="mt-1 text-sm text-slate-600">Installer options.</p>
                         <div class="mt-4 flex flex-col gap-3">
-                            <a class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="https://github.com/feldaher/scifigura/releases/download/v0.1.1/SciFigura_0.1.1_x64_en-US.msi">Download .msi</a>
-                            <a class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="https://github.com/feldaher/scifigura/releases/download/v0.1.1/SciFigura_0.1.1_x64-setup.exe">Download .exe</a>
+                            <a id="dl-win-msi" class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="#" rel="nofollow">Download .msi</a>
+                            <a id="dl-win-exe" class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="#" rel="nofollow">Download .exe</a>
                         </div>
                     </div>
 
@@ -119,18 +123,132 @@
                         <h3 class="text-lg font-semibold text-slate-900">Linux</h3>
                         <p class="mt-1 text-sm text-slate-600">Pick your preferred package format.</p>
                         <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            <a class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="https://github.com/feldaher/scifigura/releases/download/v0.1.1/SciFigura_0.1.1_amd64.AppImage">AppImage</a>
-                            <a class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="https://github.com/feldaher/scifigura/releases/download/v0.1.1/SciFigura_0.1.1_amd64.deb">.deb</a>
-                            <a class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="https://github.com/feldaher/scifigura/releases/download/v0.1.1/SciFigura-0.1.1-1.x86_64.rpm">.rpm</a>
+                            <a id="dl-linux-appimage" class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="#" rel="nofollow">AppImage</a>
+                            <a id="dl-linux-deb" class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="#" rel="nofollow">.deb</a>
+                            <a id="dl-linux-rpm" class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700" href="#" rel="nofollow">.rpm</a>
                         </div>
                     </div>
                 </div>
 
                 <p class="mt-6 text-sm text-slate-500 sm:text-center">
-                    Having trouble? Visit the <a class="text-primary hover:underline" href="https://github.com/feldaher/scifigura/releases/tag/v0.1.1">release notes</a>.
+                    Having trouble? Visit the <a id="release-notes" class="text-primary hover:underline" href="https://github.com/feldaher/scifigura/releases">release notes</a>.
                 </p>
+
+                <p id="download-error" class="mt-4 text-sm text-red-600 hidden sm:text-center"></p>
             </div>
         </div>
+
+        <script>
+            (function () {
+                const owner = 'feldaher';
+                const repo = 'scifigura';
+
+                // Latest *published* release only (excludes drafts automatically). We also exclude prereleases.
+                const apiUrl = `https://api.github.com/repos/${owner}/${repo}/releases`;
+
+                const subtitleEl = document.getElementById('download-subtitle');
+                const loadingEl = document.getElementById('download-loading');
+                const gridEl = document.getElementById('download-grid');
+                const errorEl = document.getElementById('download-error');
+
+                const releaseNotesEl = document.getElementById('release-notes');
+
+                const links = {
+                    macosX64: document.getElementById('dl-macos-x64'),
+                    macosArm64: document.getElementById('dl-macos-arm64'),
+                    winMsi: document.getElementById('dl-win-msi'),
+                    winExe: document.getElementById('dl-win-exe'),
+                    linuxAppImage: document.getElementById('dl-linux-appimage'),
+                    linuxDeb: document.getElementById('dl-linux-deb'),
+                    linuxRpm: document.getElementById('dl-linux-rpm'),
+                };
+
+                function showError(message) {
+                    if (subtitleEl) subtitleEl.textContent = 'Download SciFigura';
+                    if (loadingEl) loadingEl.classList.add('hidden');
+                    if (gridEl) gridEl.classList.add('hidden');
+                    if (errorEl) {
+                        errorEl.textContent = message;
+                        errorEl.classList.remove('hidden');
+                    }
+                }
+
+                function findAssetUrlByName(assets, filename) {
+                    const a = assets.find(x => x && x.name === filename);
+                    return a ? a.browser_download_url : null;
+                }
+
+                fetch(apiUrl, {
+                    headers: {
+                        'Accept': 'application/vnd.github+json'
+                    }
+                })
+                    .then(r => {
+                        if (!r.ok) throw new Error(`GitHub API error: ${r.status}`);
+                        return r.json();
+                    })
+                    .then(releases => {
+                        if (!Array.isArray(releases) || releases.length === 0) {
+                            throw new Error('No releases found.');
+                        }
+
+                        // Pick the latest release that is not a prerelease.
+                        const release = releases.find(r => r && r.prerelease === false);
+                        if (!release) {
+                            throw new Error('No published (non-prerelease) releases found.');
+                        }
+
+                        const assets = Array.isArray(release.assets) ? release.assets : [];
+
+                        // Expected asset names (from your current CI output)
+                        const expected = {
+                            macosX64: (tag) => `SciFigura_${tag}_x64.dmg`,
+                            macosArm64: (tag) => `SciFigura_${tag}_aarch64.dmg`,
+                            winExe: (tag) => `SciFigura_${tag}_x64-setup.exe`,
+                            winMsi: (tag) => `SciFigura_${tag}_x64_en-US.msi`,
+                            linuxAppImage: (tag) => `SciFigura_${tag}_amd64.AppImage`,
+                            linuxDeb: (tag) => `SciFigura_${tag}_amd64.deb`,
+                            linuxRpm: (tag) => `SciFigura-${tag}-1.x86_64.rpm`,
+                        };
+
+                        const tag = (release.tag_name || '').replace(/^v/, '');
+                        const titleTag = release.tag_name || release.name || 'latest release';
+
+                        if (subtitleEl) subtitleEl.textContent = `Direct downloads for the latest version (${titleTag}).`;
+                        if (releaseNotesEl && release.html_url) releaseNotesEl.href = release.html_url;
+
+                        // Build URLs
+                        const resolved = {
+                            macosX64: findAssetUrlByName(assets, expected.macosX64(tag)),
+                            macosArm64: findAssetUrlByName(assets, expected.macosArm64(tag)),
+                            winExe: findAssetUrlByName(assets, expected.winExe(tag)),
+                            winMsi: findAssetUrlByName(assets, expected.winMsi(tag)),
+                            linuxAppImage: findAssetUrlByName(assets, expected.linuxAppImage(tag)),
+                            linuxDeb: findAssetUrlByName(assets, expected.linuxDeb(tag)),
+                            linuxRpm: findAssetUrlByName(assets, expected.linuxRpm(tag)),
+                        };
+
+                        // Apply URLs + hide missing buttons
+                        for (const [key, el] of Object.entries(links)) {
+                            const url = resolved[key];
+                            if (el && url) {
+                                el.href = url;
+                                el.removeAttribute('aria-disabled');
+                                el.classList.remove('opacity-50');
+                            } else if (el) {
+                                // hide buttons if an asset isn't present
+                                el.classList.add('hidden');
+                            }
+                        }
+
+                        if (loadingEl) loadingEl.classList.add('hidden');
+                        if (gridEl) gridEl.classList.remove('hidden');
+                    })
+                    .catch(err => {
+                        showError(`Couldn't load the latest downloads automatically. Please use the release page instead. (${err.message})`);
+                    });
+            })();
+        </script>
     </section>
 
     <!-- Features Section -->
@@ -194,7 +312,7 @@
 
     <!-- Footer -->
     <footer class="bg-slate-50 border-t border-slate-200 py-12">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px--8 flex flex-col md:flex-row justify-between items-center gap-6">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-6">
             <div class="flex items-center gap-2">
                 <img src="assets/icon.png" alt="SciFigura Icon" class="h-8 w-8 rounded-lg shadow-sm">
                 <span class="text-xl font-bold tracking-tight text-slate-900">Sci<span class="text-primary">Figura</span></span>
