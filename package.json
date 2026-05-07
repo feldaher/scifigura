@@ -1,6 +1,6 @@
 {
   "name": "scifigura",
-  "version": "0.1.1",
+  "version": "0.1.0",
   "description": "Free, open-source desktop app for creating publication-ready scientific figures",
   "type": "module",
   "scripts": {
