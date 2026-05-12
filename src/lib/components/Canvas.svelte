@@ -7,6 +7,7 @@
   import AboutDialog from "./AboutDialog.svelte";
   import ScaleBarPromptDialog from "./ScaleBarPromptDialog.svelte";
   import LayoutPresets from "./LayoutPresets.svelte";
+  import type { LayoutPreset } from "../types";
     import ReformatDialog from "./ReformatDialog.svelte";
   import PresetManagerDialog from "./PresetManagerDialog.svelte";
   import ValidationPanel from "./ValidationPanel.svelte";
@@ -403,6 +404,7 @@
   let paperW = $derived(PAPER_SIZES.find((p) => p.key === paperKey)?.w ?? 800);
   let paperH = $derived(PAPER_SIZES.find((p) => p.key === paperKey)?.h ?? 600);
   let showLayoutPanel = $state(false);
+  let activeLayoutPreset = $state<LayoutPreset | null>(null);
   // Custom paper size (only used when paperKey === 'custom')
   let customPaperW = $state(800);
   let customPaperH = $state(600);
@@ -1127,6 +1129,32 @@
     // Draw Grid (on top of paper)
     if (showGrid) {
       drawGrid(ctx);
+    }
+
+    // Draw Layout Preset Grid Overlay
+    if (activeLayoutPreset) {
+      ctx.save();
+      ctx.strokeStyle = "#5aabff";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([8, 6]);
+      ctx.fillStyle = "rgba(90, 171, 255, 0.05)";
+      
+      for (let i = 0; i < activeLayoutPreset.panels.length; i++) {
+        const p = activeLayoutPreset.panels[i];
+        const px = p.x * resolvedW;
+        const py = p.y * resolvedH;
+        const pw = p.w * resolvedW;
+        const ph = p.h * resolvedH;
+        
+        ctx.fillRect(px, py, pw, ph);
+        ctx.strokeRect(px, py, pw, ph);
+        
+        ctx.fillStyle = "rgba(90, 171, 255, 0.5)";
+        ctx.font = "bold 20px sans-serif";
+        ctx.fillText(String.fromCharCode(65 + i), px + 12, py + 24);
+        ctx.fillStyle = "rgba(90, 171, 255, 0.05)"; // Reset fill for next rect
+      }
+      ctx.restore();
     }
 
     // Draw Objects
@@ -3624,6 +3652,7 @@
     selectedIds = new Set();
     history = [];
     historyIndex = -1;
+    activeLayoutPreset = null;
     resetLabelSequence();
   }
 
@@ -3794,8 +3823,21 @@
             const m = newY + primaryObj.height / 2;
             const b = newY + primaryObj.height;
 
+            const allTargets = [...objects];
+            if (activeLayoutPreset) {
+              activeLayoutPreset.panels.forEach(p => {
+                allTargets.push({
+                  id: "layout-guide",
+                  x: p.x * resolvedW,
+                  y: p.y * resolvedH,
+                  width: p.w * resolvedW,
+                  height: p.h * resolvedH
+                } as CanvasObject);
+              });
+            }
+
             // Object Snapping
-            for (const target of objects) {
+            for (const target of allTargets) {
               if (selectedIds.has(target.id)) continue;
 
               const tl = target.x;
@@ -5042,14 +5084,7 @@
         </button>
         {#if showLayoutPanel}
           <LayoutPresets
-            paperW={resolvedW}
-            paperH={resolvedH}
-            onApply={(newObjs) => {
-              objects = [...objects, ...newObjs];
-              saveHistory();
-              showLayoutPanel = false;
-              hasStarted = true;
-            }}
+            bind:activeLayoutPreset
             onClose={() => (showLayoutPanel = false)}
           />
         {/if}

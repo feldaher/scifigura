@@ -1,187 +1,41 @@
 <script lang="ts">
-  import type { CanvasObject } from "../types";
-
-  // Layout preset definitions
-  // Positions are normalized 0–1 (fraction of paper). Gutter = 0.02 = 2%.
-  const G = 0.02; // gutter
-
-  interface PanelRect {
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  }
-
-  interface LayoutPreset {
-    key: string;
-    label: string;
-    description: string;
-    panels: PanelRect[];
-  }
-
-  const LAYOUTS: LayoutPreset[] = [
-    {
-      key: "1x1",
-      label: "1 × 1",
-      description: "Single full panel",
-      panels: [{ x: G, y: G, w: 1 - 2 * G, h: 1 - 2 * G }],
-    },
-    {
-      key: "1x2",
-      label: "1 × 2",
-      description: "Two columns",
-      panels: [
-        { x: G, y: G, w: (1 - 3 * G) / 2, h: 1 - 2 * G },
-        { x: G + (1 - 3 * G) / 2 + G, y: G, w: (1 - 3 * G) / 2, h: 1 - 2 * G },
-      ],
-    },
-    {
-      key: "2x1",
-      label: "2 × 1",
-      description: "Two rows",
-      panels: [
-        { x: G, y: G, w: 1 - 2 * G, h: (1 - 3 * G) / 2 },
-        { x: G, y: G + (1 - 3 * G) / 2 + G, w: 1 - 2 * G, h: (1 - 3 * G) / 2 },
-      ],
-    },
-    {
-      key: "2x2",
-      label: "2 × 2",
-      description: "Four equal panels",
-      panels: [
-        { x: G, y: G, w: (1 - 3 * G) / 2, h: (1 - 3 * G) / 2 },
-        {
-          x: G + (1 - 3 * G) / 2 + G,
-          y: G,
-          w: (1 - 3 * G) / 2,
-          h: (1 - 3 * G) / 2,
-        },
-        {
-          x: G,
-          y: G + (1 - 3 * G) / 2 + G,
-          w: (1 - 3 * G) / 2,
-          h: (1 - 3 * G) / 2,
-        },
-        {
-          x: G + (1 - 3 * G) / 2 + G,
-          y: G + (1 - 3 * G) / 2 + G,
-          w: (1 - 3 * G) / 2,
-          h: (1 - 3 * G) / 2,
-        },
-      ],
-    },
-    {
-      key: "1+2",
-      label: "1 + 2",
-      description: "Wide top, two columns below",
-      panels: [
-        { x: G, y: G, w: 1 - 2 * G, h: (1 - 3 * G) / 2 },
-        {
-          x: G,
-          y: G + (1 - 3 * G) / 2 + G,
-          w: (1 - 3 * G) / 2,
-          h: (1 - 3 * G) / 2,
-        },
-        {
-          x: G + (1 - 3 * G) / 2 + G,
-          y: G + (1 - 3 * G) / 2 + G,
-          w: (1 - 3 * G) / 2,
-          h: (1 - 3 * G) / 2,
-        },
-      ],
-    },
-    {
-      key: "2+1",
-      label: "2 + 1",
-      description: "Two columns above, wide below",
-      panels: [
-        { x: G, y: G, w: (1 - 3 * G) / 2, h: (1 - 3 * G) / 2 },
-        {
-          x: G + (1 - 3 * G) / 2 + G,
-          y: G,
-          w: (1 - 3 * G) / 2,
-          h: (1 - 3 * G) / 2,
-        },
-        { x: G, y: G + (1 - 3 * G) / 2 + G, w: 1 - 2 * G, h: (1 - 3 * G) / 2 },
-      ],
-    },
-    {
-      key: "1x3",
-      label: "1 × 3",
-      description: "Three columns",
-      panels: (() => {
-        const w = (1 - 4 * G) / 3;
-        return [0, 1, 2].map((i) => ({
-          x: G + i * (w + G),
-          y: G,
-          w,
-          h: 1 - 2 * G,
-        }));
-      })(),
-    },
-    {
-      key: "3x2",
-      label: "3 × 2",
-      description: "Three columns, two rows",
-      panels: (() => {
-        const cw = (1 - 4 * G) / 3;
-        const ch = (1 - 3 * G) / 2;
-        const ps: PanelRect[] = [];
-        for (let row = 0; row < 2; row++)
-          for (let col = 0; col < 3; col++)
-            ps.push({
-              x: G + col * (cw + G),
-              y: G + row * (ch + G),
-              w: cw,
-              h: ch,
-            });
-        return ps;
-      })(),
-    },
-  ];
+  import type { LayoutPreset } from "../types";
+  import { LAYOUT_PRESETS } from "../utils/presets";
 
   let {
-    paperW,
-    paperH,
-    onApply,
+    activeLayoutPreset = $bindable(null),
     onClose,
   }: {
-    paperW: number;
-    paperH: number;
-    onApply: (objects: CanvasObject[]) => void;
+    activeLayoutPreset: LayoutPreset | null;
     onClose: () => void;
   } = $props();
 
   function applyLayout(preset: LayoutPreset) {
-    const newObjects: CanvasObject[] = preset.panels.map((p, i) => ({
-      id: crypto.randomUUID(),
-      type: "rectangle" as const,
-      x: Math.round(p.x * paperW),
-      y: Math.round(p.y * paperH),
-      width: Math.round(p.w * paperW),
-      height: Math.round(p.h * paperH),
-      fill: "transparent",
-      stroke: "#aaaaaa",
-      strokeWidth: 1,
-      dash: [4, 4],
-      rotation: 0,
-      label: String.fromCharCode(65 + i), // A, B, C…
-      labelPosition: "top-left" as any,
-    }));
-    onApply(newObjects);
+    activeLayoutPreset = preset;
+  }
+
+  function clearLayout() {
+    activeLayoutPreset = null;
   }
 </script>
 
 <div class="layout-panel">
   <div class="panel-header">
-    <span>Layout Presets</span>
+    <span>Layout Grid Guides</span>
     <button class="close-btn" onclick={onClose}>×</button>
   </div>
 
+  {#if activeLayoutPreset}
+    <div class="active-bar">
+      <span class="active-text">Active: {activeLayoutPreset.label}</span>
+      <button class="clear-btn" onclick={clearLayout}>Clear</button>
+    </div>
+  {/if}
+
   <div class="preset-grid">
-    {#each LAYOUTS as preset}
+    {#each LAYOUT_PRESETS as preset}
       <button
-        class="preset-card"
+        class="preset-card {activeLayoutPreset?.key === preset.key ? 'active' : ''}"
         onclick={() => applyLayout(preset)}
         title={preset.description}
       >
@@ -202,7 +56,7 @@
     {/each}
   </div>
 
-  <p class="hint">Adds dashed placeholder panels to your canvas.</p>
+  <p class="hint">Click a layout to overlay visual guides. Shapes will snap to these regions.</p>
 </div>
 
 <style>
@@ -231,6 +85,36 @@
     margin-bottom: 10px;
   }
 
+  .active-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(90, 171, 255, 0.1);
+    border: 1px solid rgba(90, 171, 255, 0.3);
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+  }
+
+  .active-text {
+    font-size: 10px;
+    color: #5aabff;
+    font-weight: 600;
+  }
+
+  .clear-btn {
+    font-size: 9px;
+    background: transparent;
+    border: 1px solid #5aabff;
+    color: #5aabff;
+    border-radius: 3px;
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+  .clear-btn:hover {
+    background: rgba(90, 171, 255, 0.2);
+  }
+
   .close-btn {
     background: transparent;
     border: none;
@@ -246,7 +130,7 @@
 
   .preset-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 6px;
   }
 
@@ -268,6 +152,10 @@
     background: #2e2e3e;
     border-color: #3a5a9a;
   }
+  .preset-card.active {
+    border-color: #5aabff;
+    background: rgba(90, 171, 255, 0.05);
+  }
 
   .thumb {
     width: 48px;
@@ -282,13 +170,17 @@
     fill: #2a3a6a;
     stroke: #5a8adf;
   }
+  .preset-card.active .thumb rect {
+    fill: rgba(90, 171, 255, 0.2);
+    stroke: #5aabff;
+  }
 
   .preset-label {
     font-size: 9px;
     color: #555;
     font-family: monospace;
   }
-  .preset-card:hover .preset-label {
+  .preset-card:hover .preset-label, .preset-card.active .preset-label {
     color: #aaa;
   }
 

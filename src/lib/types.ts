@@ -9,6 +9,20 @@ export interface GlobalTheme {
   lineDash: number[];
 }
 
+export interface PanelRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface LayoutPreset {
+  key: string;
+  label: string;
+  description: string;
+  panels: PanelRect[];
+}
+
 export interface PathNode {
   id: string;
   x: number;
