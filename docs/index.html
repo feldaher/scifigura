@@ -201,14 +201,16 @@
                         const assets = Array.isArray(release.assets) ? release.assets : [];
 
                         // Expected asset names (from your current CI output)
+                        // Find assets by matching their suffixes instead of exact version tags
+                        // This prevents broken links if the git tag doesn't exactly match the Tauri version string.
                         const expected = {
-                            macosX64: (tag) => `SciFigura_${tag}_x64.dmg`,
-                            macosArm64: (tag) => `SciFigura_${tag}_aarch64.dmg`,
-                            winExe: (tag) => `SciFigura_${tag}_x64-setup.exe`,
-                            winMsi: (tag) => `SciFigura_${tag}_x64_en-US.msi`,
-                            linuxAppImage: (tag) => `SciFigura_${tag}_amd64.AppImage`,
-                            linuxDeb: (tag) => `SciFigura_${tag}_amd64.deb`,
-                            linuxRpm: (tag) => `SciFigura-${tag}-1.x86_64.rpm`,
+                            macosX64: (a) => a.name.endsWith('_x64.dmg'),
+                            macosArm64: (a) => a.name.endsWith('_aarch64.dmg'),
+                            winExe: (a) => a.name.endsWith('x64-setup.exe'),
+                            winMsi: (a) => a.name.endsWith('x64_en-US.msi'),
+                            linuxAppImage: (a) => a.name.endsWith('amd64.AppImage'),
+                            linuxDeb: (a) => a.name.endsWith('amd64.deb'),
+                            linuxRpm: (a) => a.name.endsWith('x86_64.rpm'),
                         };
 
                         const tag = (release.tag_name || '').replace(/^v/, '');
@@ -218,14 +220,19 @@
                         if (releaseNotesEl && release.html_url) releaseNotesEl.href = release.html_url;
 
                         // Build URLs
+                        function findAssetUrl(assets, matcher) {
+                            const a = assets.find(matcher);
+                            return a ? a.browser_download_url : null;
+                        }
+
                         const resolved = {
-                            macosX64: findAssetUrlByName(assets, expected.macosX64(tag)),
-                            macosArm64: findAssetUrlByName(assets, expected.macosArm64(tag)),
-                            winExe: findAssetUrlByName(assets, expected.winExe(tag)),
-                            winMsi: findAssetUrlByName(assets, expected.winMsi(tag)),
-                            linuxAppImage: findAssetUrlByName(assets, expected.linuxAppImage(tag)),
-                            linuxDeb: findAssetUrlByName(assets, expected.linuxDeb(tag)),
-                            linuxRpm: findAssetUrlByName(assets, expected.linuxRpm(tag)),
+                            macosX64: findAssetUrl(assets, expected.macosX64),
+                            macosArm64: findAssetUrl(assets, expected.macosArm64),
+                            winExe: findAssetUrl(assets, expected.winExe),
+                            winMsi: findAssetUrl(assets, expected.winMsi),
+                            linuxAppImage: findAssetUrl(assets, expected.linuxAppImage),
+                            linuxDeb: findAssetUrl(assets, expected.linuxDeb),
+                            linuxRpm: findAssetUrl(assets, expected.linuxRpm),
                         };
 
                         // Apply URLs + hide missing buttons

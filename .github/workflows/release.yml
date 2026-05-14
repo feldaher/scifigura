@@ -120,6 +120,6 @@ jobs:
             | Linux | `.AppImage` / `.deb` |
 
             See [CHANGELOG](https://github.com/feldaher/scifigura/blob/main/CHANGELOG.md) for what's new.
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
